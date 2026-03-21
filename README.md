@@ -1,8 +1,10 @@
-# AI Employee
+# AI Employee SDK
 
-Composable autonomy primitives for the [Vercel AI SDK](https://ai-sdk.dev). Add permissions, cost tracking, and server-side interrupts to any `generateText()` call.
+Composable autonomy primitives for the [Vercel AI SDK](https://ai-sdk.dev).
 
-This is a toolbox, not a framework. Each primitive is a standalone function that composes with raw AI SDK — no wrappers, no lock-in.
+> The SDK gives you primitives. You build the employee.
+
+Every AI agent framework wants to own your stack. AI Employee SDK takes the opposite approach: standalone functions that compose with raw `generateText()`. Need tool permissions? Import `membrane()`. Need cost tracking? Import `createCostTracker()`. Need to pause an agent for human approval and resume it hours later with zero compute cost? Import the interrupt primitives. Each one is a pure function. No base classes, no runtime, no lock-in. Built for the Vercel AI SDK, not around it.
 
 ## Packages
 
@@ -57,7 +59,7 @@ console.log(tracker.snapshot());  // what it cost
 
 - **Membrane** — 4-tier tool permissions (auto/draft/confirm/block) with glob patterns and custom resolvers
 - **Cost Tracker** — Real-time USD tracking per model with shared budgets across agents
-- **Server-Side Interrupts** — Serialize agent state to KV, notify humans, resume hours later
+- **Server-Side Interrupts** — Serialize agent state to KV, notify humans, resume hours later with zero compute cost
 - **Heartbeat** — Concurrency guard + circuit breaker for always-on agents
 - **Memory** — Inject persistent context into system prompts from any MemoryStore
 - **EmployeeAgent** — Convenience wrapper that composes all primitives together
@@ -69,7 +71,7 @@ See [`examples/slack-coworker`](examples/slack-coworker) for a full Slack bot wi
 ## Requirements
 
 - Node.js >= 18
-- AI SDK v7 (`ai` >= 7.0.0-beta.0)
+- AI SDK v7 (`ai` >= 7.0.0-beta.30)
 
 ## License
 
