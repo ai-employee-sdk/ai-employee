@@ -1,0 +1,60 @@
+{
+  "name": "@ai-employee-sdk/core",
+  "version": "0.2.0",
+  "description": "Autonomous agent primitives for the Vercel AI SDK — permissions, cost tracking, server-side interrupts",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ai-employee-sdk/core.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/ai-employee-sdk/core#readme",
+  "bugs": {
+    "url": "https://github.com/ai-employee-sdk/core/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "ai-sdk",
+    "vercel",
+    "autonomous",
+    "tools",
+    "permissions",
+    "membrane",
+    "cost-tracking",
+    "interrupts"
+  ],
+  "peerDependencies": {
+    "ai": ">=7.0.0-beta.30 <8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ai": { "optional": false }
+  },
+  "devDependencies": {
+    "ai": "7.0.0-beta.30",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "tsup": "^8.0.0",
+    "vitest": "^4.0.0"
+  },
+  "publishConfig": { "access": "public" },
+  "engines": { "node": ">=18" }
+}

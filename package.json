@@ -1,0 +1,26 @@
+{
+  "private": true,
+  "name": "ai-employee",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "pnpm -r exec tsc --noEmit",
+    "clean": "pnpm -r run clean"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.0.0"
+  },
+  "packageManager": "pnpm@9.8.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.41",
+    "ai": "7.0.0-beta.30",
+    "tsx": "^4.21.0",
+    "zod": "^3.25.76"
+  }
+}

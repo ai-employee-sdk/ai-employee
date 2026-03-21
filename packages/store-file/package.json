@@ -1,0 +1,35 @@
+{
+  "name": "@ai-employee-sdk/store-file",
+  "version": "0.1.0",
+  "description": "File-based MemoryStore for the AI Employee SDK",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "src", "README.md"],
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ai-employee-sdk/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "tsup": "^8.0.0",
+    "vitest": "^4.0.0"
+  },
+  "publishConfig": { "access": "public" },
+  "engines": { "node": ">=18" }
+}
