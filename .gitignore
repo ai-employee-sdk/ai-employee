@@ -6,3 +6,4 @@ dist
 .env.*
 .ai-employee-*
 *.txt
+CLAUDE.local.md
