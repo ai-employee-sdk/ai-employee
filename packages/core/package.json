@@ -23,12 +23,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ai-employee-sdk/core.git",
+    "url": "git+https://github.com/ai-employee-sdk/ai-employee.git",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/ai-employee-sdk/core#readme",
+  "homepage": "https://github.com/ai-employee-sdk/ai-employee#readme",
   "bugs": {
-    "url": "https://github.com/ai-employee-sdk/core/issues"
+    "url": "https://github.com/ai-employee-sdk/ai-employee/issues"
   },
   "keywords": [
     "ai",
