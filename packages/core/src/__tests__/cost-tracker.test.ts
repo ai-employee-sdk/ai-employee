@@ -147,7 +147,7 @@ describe('createCostTracker', () => {
     it('includes common models', () => {
       expect(DEFAULT_MODEL_PRICING['gpt-4o']).toBeDefined();
       expect(DEFAULT_MODEL_PRICING['gpt-4o-mini']).toBeDefined();
-      expect(DEFAULT_MODEL_PRICING['claude-sonnet-4-20250514']).toBeDefined();
+      expect(DEFAULT_MODEL_PRICING['claude-sonnet-4']).toBeDefined();
       expect(DEFAULT_MODEL_PRICING['gemini-2.5-pro']).toBeDefined();
     });
 
