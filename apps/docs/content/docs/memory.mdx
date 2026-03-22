@@ -28,7 +28,7 @@ const memoryStep = createMemoryPrepareStep(store);
 const result = await generateText({
   model: openai('gpt-4o'),
   prepareStep: memoryStep,
-  maxSteps: 5,
+  stopWhen: stepCountIs(5),
   prompt: 'What should I work on next?',
 });
 ```
@@ -152,7 +152,7 @@ const result = await generateText({
   model: openai('gpt-4o'),
   tools: m.tools,
   prepareStep: composed,
-  maxSteps: 10,
+  stopWhen: stepCountIs(10),
   prompt: '...',
 });
 ```

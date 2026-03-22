@@ -26,9 +26,8 @@ const cost = createCostTracker({
 
 const result = await generateText({
   model: openai('gpt-4o'),
-  maxSteps: 20,
   onStepFinish: cost.onStepFinish,
-  stopWhen: cost.stopCondition,
+  stopWhen: [stepCountIs(20), cost.stopCondition],
   prompt: 'Analyze this dataset...',
 });
 

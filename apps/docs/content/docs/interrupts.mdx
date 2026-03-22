@@ -20,7 +20,7 @@ This package provides three pure functions to handle that flow:
 ## Basic Usage
 
 ```typescript
-import { generateText, tool } from 'ai';
+import { generateText, tool, stepCountIs } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import {
   membrane,
@@ -33,7 +33,7 @@ import { z } from 'zod';
 const tools = {
   sendEmail: tool({
     description: 'Send an email',
-    parameters: z.object({
+    inputSchema: z.object({
       to: z.string(),
       subject: z.string(),
       body: z.string(),
@@ -52,7 +52,7 @@ const result = await generateText({
   model: openai('gpt-4o'),
   tools: m.tools,
   prepareStep: m.prepareStep,
-  maxSteps: 10,
+  stopWhen: stepCountIs(10),
   prompt: 'Send an email to alice@example.com about the meeting.',
 });
 
@@ -60,8 +60,10 @@ const result = await generateText({
 const pending = extractPendingApprovals(result);
 
 if (pending.length > 0) {
-  // Step 3: Create serializable handle
-  const handle = createInterruptHandle(result, pending);
+  // Step 3: Create serializable handle (include original prompt for context on resume)
+  const handle = createInterruptHandle(result, pending, {
+    originalMessages: [{ role: 'user', content: 'Send an email to alice@example.com about the meeting.' }],
+  });
   // handle.id = UUID, safe for KV/DB key
   // handle is plain JSON, no classes, no functions
 
@@ -82,7 +84,7 @@ if (pending.length > 0) {
     tools: m.tools,
     prepareStep: m.prepareStep,
     messages,
-    maxSteps: 10,
+    stopWhen: stepCountIs(10),
   });
 
   console.log(resumed.text);
@@ -117,7 +119,7 @@ const { messages } = resolveInterrupt(handle, [
 ]);
 ```
 
-The tool result includes `[DENIED] Tool call "sendEmail" was denied by human reviewer.` The agent receives this as context and can adjust its behavior.
+The tool result uses the `execution-denied` output type, giving the agent a structured signal that the tool was blocked. The agent receives this as context and can adjust its behavior.
 
 <Callout type="info">
   Missing decisions are treated as deny. If you only provide decisions for some pending approvals, the rest are automatically denied.
@@ -171,9 +173,15 @@ Finds tool calls in the `generateText` result that have no matching `toolResult`
 | `args` | `unknown` | Arguments proposed by the LLM |
 | `stepNumber` | `number` | Which step the call occurred in |
 
-### `createInterruptHandle(result, pendingApprovals)`
+### `createInterruptHandle(result, pendingApprovals, options?)`
 
 Creates a serializable JSON handle from a `generateText` result.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `result` | `any` | The `generateText` result |
+| `pendingApprovals` | `PendingApproval[]` | From `extractPendingApprovals` |
+| `options.originalMessages` | `any[]?` | Original input messages to include in the handle. Recommended so the handle is self-contained for resume. |
 
 **Returns:** `InterruptHandle`
 

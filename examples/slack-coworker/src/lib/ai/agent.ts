@@ -1,5 +1,5 @@
 import { openai } from "@ai-sdk/openai";
-import { generateText, tool, type ToolSet } from "ai";
+import { generateText, tool, stepCountIs, type ToolSet } from "ai";
 import { z } from "zod";
 import {
   membrane,
@@ -37,14 +37,11 @@ The URL must always be inside angle brackets.
 - User mention: <@U12345678>  |  Channel mention: <#C12345678>
 - Never use standard markdown like **bold**, [link](url), or # headers
 
-## Membrane tiers
+## Tool usage
 
-Tools are tiered by permission level:
-- AUTO: executes immediately (read operations, lookups)
-- DRAFT: executes but is logged for review (replies in threads)
-- CONFIRM: requires explicit human approval before executing (posting to channels)
-
-When a CONFIRM tool is needed, the system will pause and ask the human for approval.`;
+When the user asks you to post something to a channel, ALWAYS use the postToChannel tool immediately.
+Do NOT ask for confirmation in text. The system handles approval automatically.
+Just call the tool. If approval is needed, the system will pause and present buttons to the user.`;
 
 /**
  * Slack client shape — accepts the @slack/bolt WebClient.
@@ -176,7 +173,7 @@ const MEMBRANE_CONFIG = {
     draft: ["replyInThread"],
     confirm: ["postToChannel"],
   },
-} as const;
+};
 
 /**
  * Run the Slack coworker agent.
@@ -188,6 +185,7 @@ export async function runCoworker(
   slackClient: SlackClient,
   prompt: string,
   existingMessages?: any[],
+  previousUsage?: { inputTokens: number; outputTokens: number; totalTokens: number },
 ) {
   const tools = createTools(store, slackClient);
 
@@ -201,6 +199,14 @@ export async function runCoworker(
     pricing: DEFAULT_MODEL_PRICING,
   });
 
+  // Seed tracker with usage from before the interrupt (budget continuity)
+  if (previousUsage) {
+    tracker.onStepFinish({
+      usage: { inputTokens: previousUsage.inputTokens, outputTokens: previousUsage.outputTokens },
+      response: { modelId: "gpt-4o-mini" },
+    });
+  }
+
   const result = await generateText({
     model: openai("gpt-4o-mini"),
     system: SYSTEM_INSTRUCTIONS,
@@ -208,8 +214,7 @@ export async function runCoworker(
     prepareStep: m.prepareStep,
     experimental_onToolCallFinish: m.onToolCallFinish as any,
     onStepFinish: tracker.onStepFinish,
-    stopWhen: tracker.stopCondition,
-    maxSteps: 10,
+    stopWhen: [stepCountIs(10), tracker.stopCondition],
     ...(existingMessages ? { messages: existingMessages } : { prompt }),
   });
 
@@ -217,7 +222,9 @@ export async function runCoworker(
   const pending = extractPendingApprovals(result);
 
   if (pending.length > 0) {
-    const handle = createInterruptHandle(result, pending);
+    // Include original user message so the handle is self-contained for resume
+    const originalMessages = existingMessages ?? [{ role: "user" as const, content: prompt }];
+    const handle = createInterruptHandle(result, pending, { originalMessages });
     return {
       type: "interrupt" as const,
       handle,
@@ -237,6 +244,9 @@ export async function runCoworker(
 
 /**
  * Resume a previously interrupted agent run after human approval/denial.
+ *
+ * For approved tools: executes them first, then injects the real result
+ * into the messages so the LLM sees the actual output.
  */
 export async function resumeCoworker(
   store: MemoryStore,
@@ -244,8 +254,45 @@ export async function resumeCoworker(
   handle: InterruptHandle,
   decisions: InterruptDecision[],
 ) {
-  const { messages } = resolveInterrupt(handle, decisions);
-  return runCoworker(store, slackClient, "", messages);
+  const { messages, previousUsage } = resolveInterrupt(handle, decisions);
+  const tools = createTools(store, slackClient);
+
+  // Execute approved tools and replace their placeholder results with real output
+  const lastMsg = messages[messages.length - 1];
+  if (lastMsg?.role === "tool" && Array.isArray(lastMsg.content)) {
+    for (const part of lastMsg.content) {
+      if (part.type !== "tool-result" || part.output?.type === "execution-denied") continue;
+
+      // Find the matching decision
+      const decision = decisions.find(
+        (d) => d.toolCallId === part.toolCallId && d.action === "approve",
+      );
+      if (!decision) continue;
+
+      // Find the tool and execute it
+      const toolDef = tools[part.toolName as keyof typeof tools];
+      if (!toolDef?.execute) continue;
+
+      // Use editedArgs if provided, otherwise find original args from handle
+      const pending = handle.pendingApprovals.find((p) => p.toolCallId === part.toolCallId);
+      const args = decision.editedArgs ?? pending?.args ?? {};
+
+      try {
+        const result = await toolDef.execute(args as any, { toolCallId: part.toolCallId } as any);
+        part.output = {
+          type: "text",
+          value: typeof result === "string" ? result : JSON.stringify(result),
+        };
+      } catch (err: any) {
+        part.output = {
+          type: "text",
+          value: `Error executing ${part.toolName}: ${err.message}`,
+        };
+      }
+    }
+  }
+
+  return runCoworker(store, slackClient, "", messages, previousUsage);
 }
 
 // Re-export types for use in listeners

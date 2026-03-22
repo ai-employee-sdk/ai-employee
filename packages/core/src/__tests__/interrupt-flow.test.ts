@@ -54,11 +54,14 @@ function fakeGenerateResult(opts: {
   return {
     steps,
     text: 'Agent response',
-    messages: opts.messages ?? [
-      { role: 'user', content: 'Do the task' },
-      { role: 'assistant', content: 'Working on it...' },
-    ],
-    response: { modelId: 'gpt-4o-mini' },
+    // AI SDK v7: messages at result.response.messages
+    response: {
+      modelId: 'gpt-4o-mini',
+      messages: opts.messages ?? [
+        { role: 'user', content: 'Do the task' },
+        { role: 'assistant', content: 'Working on it...' },
+      ],
+    },
   };
 }
 
@@ -139,8 +142,7 @@ describe('Interrupt Flow — Full Round-Trip', () => {
     expect(messages.length).toBeGreaterThan(handle.messages.length);
     const lastMsg = messages[messages.length - 1];
     expect(lastMsg.role).toBe('tool');
-    expect(lastMsg.content[0].result).toContain('[APPROVED]');
-    expect(lastMsg.content[0].approved).toBe(true);
+    expect(lastMsg.content[0].output.value).toContain('[APPROVED]');
 
     // Budget continuity preserved
     expect(previousUsage.totalTokens).toBe(450);
@@ -168,8 +170,8 @@ describe('Interrupt Flow — Full Round-Trip', () => {
     ]);
 
     const lastMsg = messages[messages.length - 1];
-    expect(lastMsg.content[0].result).toContain('[DENIED]');
-    expect(lastMsg.content[0].result).toContain('sendEmail');
+    expect(lastMsg.content[0].output.type).toBe('execution-denied');
+    expect(lastMsg.content[0].output.reason).toContain('sendEmail');
   });
 
   it('full cycle: approve with edited args', async () => {
@@ -190,9 +192,8 @@ describe('Interrupt Flow — Full Round-Trip', () => {
     ]);
 
     const lastMsg = messages[messages.length - 1];
-    expect(lastMsg.content[0].result).toContain('[APPROVED]');
-    expect(lastMsg.content[0].result).toContain('correct@co.com');
-    expect(lastMsg.content[0].args).toEqual({ to: 'correct@co.com', body: 'Report' });
+    expect(lastMsg.content[0].output.value).toContain('[APPROVED]');
+    expect(lastMsg.content[0].output.value).toContain('correct@co.com');
   });
 
   it('JSON round-trip: handle survives KV serialization', async () => {
@@ -220,7 +221,7 @@ describe('Interrupt Flow — Full Round-Trip', () => {
       { toolCallId: 'tc_2', action: 'approve' },
     ]);
 
-    expect(messages[messages.length - 1].content[0].result).toContain('[APPROVED]');
+    expect(messages[messages.length - 1].content[0].output.value).toContain('[APPROVED]');
     expect(previousUsage.totalTokens).toBe(225);
   });
 
@@ -249,8 +250,8 @@ describe('Interrupt Flow — Full Round-Trip', () => {
 
     const toolMsg = messages[messages.length - 1];
     expect(toolMsg.content).toHaveLength(2);
-    expect(toolMsg.content[0].result).toContain('[APPROVED]');
-    expect(toolMsg.content[1].result).toContain('[DENIED]');
+    expect(toolMsg.content[0].output.value).toContain('[APPROVED]');
+    expect(toolMsg.content[1].output.type).toBe('execution-denied');
   });
 
   it('cost tracker works alongside interrupts', () => {
@@ -297,7 +298,7 @@ describe('Interrupt Flow — Full Round-Trip', () => {
     expect(loaded1).not.toBeNull();
     await store.delete(`interrupt:${handle.id}`);
     const { messages: msgs1 } = resolveInterrupt(loaded1!, [{ toolCallId: 'tc_1', action: 'approve' }]);
-    expect(msgs1[msgs1.length - 1].content[0].result).toContain('[APPROVED]');
+    expect(msgs1[msgs1.length - 1].content[0].output.value).toContain('[APPROVED]');
 
     // Second approval (webhook retry): handle gone
     const loaded2 = await store.get<typeof handle>(`interrupt:${handle.id}`);

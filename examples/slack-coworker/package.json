@@ -9,14 +9,15 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.34",
     "@ai-employee-sdk/core": "workspace:*",
     "@ai-employee-sdk/store-file": "workspace:*",
     "@ai-employee-sdk/store-kv": "workspace:*",
+    "@ai-sdk/openai": "^3.0.34",
     "@slack/bolt": "^4.6.0",
     "@slack/web-api": "^7.14.1",
     "@vercel/slack-bolt": "1.1.0",
     "ai": "7.0.0-beta.30",
+    "express": "^5.2.1",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

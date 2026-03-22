@@ -21,7 +21,7 @@ npm install @ai-employee-sdk/core ai@latest
 ```
 
 ```typescript
-import { generateText } from 'ai';
+import { generateText, stepCountIs } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { membrane, createCostTracker, DEFAULT_MODEL_PRICING } from '@ai-employee-sdk/core';
 
@@ -48,8 +48,7 @@ const result = await generateText({
   tools: m.tools,
   prepareStep: m.prepareStep,
   onStepFinish: tracker.onStepFinish,
-  stopWhen: tracker.stopCondition,
-  maxSteps: 20,
+  stopWhen: [stepCountIs(20), tracker.stopCondition],
   prompt: 'Summarize the project and email the team.',
 });
 

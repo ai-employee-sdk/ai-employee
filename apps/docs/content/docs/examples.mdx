@@ -9,7 +9,7 @@ An always-on agent that monitors Slack for tasks, with permission tiers, cost li
 
 ```typescript
 import { openai } from '@ai-sdk/openai';
-import { generateText, tool } from 'ai';
+import { generateText, tool, stepCountIs } from 'ai';
 import {
   EmployeeAgent,
   createCostTracker,
@@ -23,7 +23,7 @@ import { z } from 'zod';
 const tools = {
   readChannel: tool({
     description: 'Read messages from a Slack channel',
-    parameters: z.object({ channel: z.string(), limit: z.number().default(10) }),
+    inputSchema: z.object({ channel: z.string(), limit: z.number().default(10) }),
     execute: async ({ channel, limit }) => {
       // your Slack API call
       return `Last ${limit} messages from #${channel}`;
@@ -31,7 +31,7 @@ const tools = {
   }),
   postMessage: tool({
     description: 'Post a message to Slack',
-    parameters: z.object({ channel: z.string(), text: z.string() }),
+    inputSchema: z.object({ channel: z.string(), text: z.string() }),
     execute: async ({ channel, text }) => {
       // your Slack API call
       return `Posted to #${channel}`;
@@ -39,7 +39,7 @@ const tools = {
   }),
   createJiraTicket: tool({
     description: 'Create a Jira ticket',
-    parameters: z.object({ title: z.string(), body: z.string() }),
+    inputSchema: z.object({ title: z.string(), body: z.string() }),
     execute: async ({ title }) => {
       // your Jira API call
       return `Created ticket: ${title}`;
@@ -68,9 +68,8 @@ const agent = new EmployeeAgent({
     },
   },
   memory: { store },
-  maxSteps: 10,
   onStepFinish: cost.onStepFinish,
-  stopWhen: cost.stopCondition,
+  stopWhen: [stepCountIs(10), cost.stopCondition],
 });
 
 // Heartbeat: check for work every 60 seconds
@@ -94,7 +93,7 @@ A Next.js API route that handles the interrupt/resume cycle for tool approval.
 ```typescript
 // app/api/agent/route.ts
 import { openai } from '@ai-sdk/openai';
-import { generateText, tool } from 'ai';
+import { generateText, tool, stepCountIs } from 'ai';
 import {
   membrane,
   extractPendingApprovals,
@@ -107,12 +106,12 @@ import { z } from 'zod';
 const tools = {
   searchDocs: tool({
     description: 'Search documentation',
-    parameters: z.object({ query: z.string() }),
+    inputSchema: z.object({ query: z.string() }),
     execute: async ({ query }) => `Results for: ${query}`,
   }),
   deployToProduction: tool({
     description: 'Deploy the current build to production',
-    parameters: z.object({ version: z.string() }),
+    inputSchema: z.object({ version: z.string() }),
     execute: async ({ version }) => `Deployed v${version}`,
   }),
 };
@@ -139,15 +138,16 @@ export async function POST(req: Request) {
     prepareStep: m.prepareStep,
     experimental_onToolCallFinish: m.onToolCallFinish,
     onStepFinish: cost.onStepFinish,
-    stopWhen: cost.stopCondition,
-    maxSteps: 10,
+    stopWhen: [stepCountIs(10), cost.stopCondition],
     prompt,
   });
 
   const pending = extractPendingApprovals(result);
 
   if (pending.length > 0) {
-    const handle = createInterruptHandle(result, pending);
+    const handle = createInterruptHandle(result, pending, {
+      originalMessages: [{ role: 'user', content: prompt }],
+    });
 
     // Store handle (e.g., KV, database)
     await kv.set(`interrupt:${handle.id}`, JSON.stringify(handle));
@@ -176,7 +176,7 @@ export async function POST(req: Request) {
 ```typescript
 // app/api/agent/resolve/route.ts
 import { openai } from '@ai-sdk/openai';
-import { generateText } from 'ai';
+import { generateText, stepCountIs } from 'ai';
 import { resolveInterrupt, membrane } from '@ai-employee-sdk/core';
 
 export async function POST(req: Request) {
@@ -195,7 +195,7 @@ export async function POST(req: Request) {
     tools: m.tools,
     prepareStep: m.prepareStep,
     messages,
-    maxSteps: 10,
+    stopWhen: stepCountIs(10),
   });
 
   await kv.delete(`interrupt:${handleId}`);

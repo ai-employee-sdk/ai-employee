@@ -3,6 +3,7 @@ import path from "path";
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(__dirname, "../../"),
+  serverExternalPackages: ["@slack/bolt", "@slack/web-api", "express"],
   webpack: (config) => {
     config.resolve.alias = {
       ...config.resolve.alias,

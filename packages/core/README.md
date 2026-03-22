@@ -36,7 +36,7 @@ npm install @ai-employee-sdk/core ai@latest
 ### Membrane — Tool Permissions
 
 ```typescript
-import { generateText } from 'ai';
+import { generateText, stepCountIs } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { membrane } from '@ai-employee-sdk/core';
 
@@ -54,7 +54,7 @@ const result = await generateText({
   model: openai('gpt-4o-mini'),
   tools: m.tools,
   prepareStep: m.prepareStep,
-  maxSteps: 10,
+  stopWhen: stepCountIs(10),
   prompt: 'Summarize the project and email the team.',
 });
 
@@ -75,8 +75,7 @@ const result = await generateText({
   model: openai('gpt-4o-mini'),
   tools: m.tools,
   onStepFinish: tracker.onStepFinish,
-  stopWhen: tracker.stopCondition,
-  maxSteps: 20,
+  stopWhen: [stepCountIs(20), tracker.stopCondition],
   prompt: 'Research this topic thoroughly.',
 });
 
@@ -89,6 +88,7 @@ console.log(`Cost: $${snap.totalCostUsd.toFixed(4)}, remaining: $${snap.remainin
 For agents that run on cron jobs, webhooks, or serverless functions — where there's no UI to show approval dialogs.
 
 ```typescript
+import { generateText, stepCountIs } from 'ai';
 import {
   extractPendingApprovals,
   createInterruptHandle,
@@ -96,14 +96,16 @@ import {
 } from '@ai-employee-sdk/core';
 
 // 1. Agent runs, hits a CONFIRM tool -> needsApproval stops the loop
-const result = await generateText({ model, tools: m.tools, maxSteps: 10, prompt });
+const result = await generateText({ model, tools: m.tools, stopWhen: stepCountIs(10), prompt });
 
 // 2. Check if any CONFIRM tools are waiting
 const pending = extractPendingApprovals(result);
 
 if (pending.length > 0) {
   // 3. Serialize state -> save to KV -> notify human (Slack, email, etc.)
-  const handle = createInterruptHandle(result, pending);
+  const handle = createInterruptHandle(result, pending, {
+    originalMessages: [{ role: 'user', content: prompt }],
+  });
   await kv.set(`interrupt:${handle.id}`, handle);
   await notifyHuman(pending); // your notification logic
   return; // function exits -- no compute cost while waiting
@@ -123,8 +125,8 @@ const { messages, previousUsage } = resolveInterrupt(handle, [
 const resumed = await generateText({
   model,
   tools: m.tools,
-  messages, // includes [APPROVED] tool results
-  maxSteps: 10,
+  messages,
+  stopWhen: stepCountIs(10),
 });
 ```
 

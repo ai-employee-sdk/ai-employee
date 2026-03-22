@@ -105,15 +105,18 @@ describe('🦞 Interrupt Flow — Visual Walkthrough', () => {
         },
       ],
       text: 'I need to delete old backups.',
-      messages: [
-        { role: 'user', content: 'Run nightly maintenance' },
-        { role: 'assistant', content: 'Checking status...' },
-        { role: 'tool', content: [{ toolCallId: 'tc_1', result: 'All systems healthy' }] },
-        { role: 'assistant', content: 'Adding label and cleaning backups...' },
-        { role: 'tool', content: [{ toolCallId: 'tc_2', result: 'Label added' }] },
-        { role: 'assistant', content: 'I need to delete backups older than 7 days.' },
-      ],
-      response: { modelId: 'gpt-4o-mini' },
+      // AI SDK v7: messages at result.response.messages
+      response: {
+        modelId: 'gpt-4o-mini',
+        messages: [
+          { role: 'user', content: 'Run nightly maintenance' },
+          { role: 'assistant', content: 'Checking status...' },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc_1', toolName: 'checkStatus', output: { type: 'text', value: 'All systems healthy' } }] },
+          { role: 'assistant', content: 'Adding label and cleaning backups...' },
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc_2', toolName: 'addLabel', output: { type: 'text', value: 'Label added' } }] },
+          { role: 'assistant', content: 'I need to delete backups older than 7 days.' },
+        ],
+      },
     };
 
     // Simulate onStepFinish for cost tracking
@@ -243,15 +246,12 @@ describe('🦞 Interrupt Flow — Visual Walkthrough', () => {
 
     const toolMsg = messages[messages.length - 1];
     console.log(`  Tool result:`);
-    console.log(`    ${toolMsg.content[0].result}`);
-    console.log(`    approved: ${toolMsg.content[0].approved}`);
-    console.log(`    args:     ${JSON.stringify(toolMsg.content[0].args)}`);
+    console.log(`    ${toolMsg.content[0].output.value}`);
 
     console.log(`\n  Previous usage carried forward: ${JSON.stringify(previousUsage)}`);
 
-    expect(toolMsg.content[0].result).toContain('[APPROVED]');
-    expect(toolMsg.content[0].result).toContain('"days":30');
-    expect(toolMsg.content[0].args).toEqual({ days: 30 });
+    expect(toolMsg.content[0].output.value).toContain('[APPROVED]');
+    expect(toolMsg.content[0].output.value).toContain('"days":30');
 
     // ═══════════════════════════════════════════════════════
     // CLEANUP: Delete handle (idempotency)

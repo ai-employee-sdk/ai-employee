@@ -9,7 +9,7 @@ The membrane already tracks every tool call in `m.auditLog`. For sending events 
 
 ```typescript
 import { createAuditLogger } from '@ai-employee-sdk/core';
-import { generateText } from 'ai';
+import { generateText, stepCountIs } from 'ai';
 import { openai } from '@ai-sdk/openai';
 
 const audit = createAuditLogger({
@@ -31,7 +31,7 @@ const result = await generateText({
   experimental_onToolCallStart: audit.onToolCallStart,
   experimental_onToolCallFinish: audit.onToolCallFinish,
   onStepFinish: audit.onStepFinish,
-  maxSteps: 10,
+  stopWhen: stepCountIs(10),
   prompt: '...',
 });
 ```

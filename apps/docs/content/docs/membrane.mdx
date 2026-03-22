@@ -22,24 +22,24 @@ Every tool gets exactly one tier, which controls what happens when the agent tri
 
 ```typescript
 import { membrane } from '@ai-employee-sdk/core';
-import { generateText, tool } from 'ai';
+import { generateText, tool, stepCountIs } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { z } from 'zod';
 
 const tools = {
   readFile: tool({
     description: 'Read a file',
-    parameters: z.object({ path: z.string() }),
+    inputSchema: z.object({ path: z.string() }),
     execute: async ({ path }) => `contents of ${path}`,
   }),
   writeFile: tool({
     description: 'Write to a file',
-    parameters: z.object({ path: z.string(), content: z.string() }),
+    inputSchema: z.object({ path: z.string(), content: z.string() }),
     execute: async ({ path, content }) => `wrote to ${path}`,
   }),
   deleteFile: tool({
     description: 'Delete a file',
-    parameters: z.object({ path: z.string() }),
+    inputSchema: z.object({ path: z.string() }),
     execute: async ({ path }) => `deleted ${path}`,
   }),
 };
@@ -58,7 +58,7 @@ const result = await generateText({
   tools: m.tools,
   prepareStep: m.prepareStep,
   experimental_onToolCallFinish: m.onToolCallFinish,
-  maxSteps: 10,
+  stopWhen: stepCountIs(10),
   prompt: 'Read config.json, write a backup, and delete the old one.',
 });
 

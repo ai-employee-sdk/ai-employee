@@ -1,11 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { extractPendingApprovals, createInterruptHandle, resolveInterrupt } from '../interrupts';
 
-// Helper: fake generateText result
+// Helper: fake generateText result (AI SDK v7 format)
 function fakeResult(steps: any[], messages?: any[]) {
   return {
     steps,
-    messages: messages ?? [{ role: 'user', content: 'test' }],
+    // v7: messages are at result.response.messages, not result.messages
+    response: {
+      messages: messages ?? [{ role: 'user', content: 'test' }],
+    },
     text: 'done',
   };
 }
@@ -90,7 +93,7 @@ describe('createInterruptHandle', () => {
 
     expect(handle.id).toBeDefined();
     expect(handle.createdAt).toBeDefined();
-    expect(handle.messages).toEqual(result.messages);
+    expect(handle.messages).toEqual(result.response.messages);
     expect(handle.pendingApprovals).toEqual(pending);
     expect(handle.interruptedStepToolCalls).toEqual([{ toolCallId: 'tc1', toolName: 'delete', args: { id: 1 } }]);
     expect(handle.previousUsage).toEqual({ inputTokens: 100, outputTokens: 50, totalTokens: 150 });
@@ -148,38 +151,33 @@ describe('resolveInterrupt', () => {
   });
 
   describe('approve', () => {
-    it('appends tool message with [APPROVED] result', () => {
+    it('appends tool message with [APPROVED] output', () => {
       const { messages } = resolveInterrupt(baseHandle, [{ toolCallId: 'tc1', action: 'approve' }]);
       expect(messages).toHaveLength(3);
       const toolMsg = messages[2];
       expect(toolMsg.role).toBe('tool');
-      expect(toolMsg.content[0].result).toContain('[APPROVED]');
-      expect(toolMsg.content[0].approved).toBe(true);
+      expect(toolMsg.content[0].output.value).toContain('[APPROVED]');
     });
 
-    it('uses original args when no editedArgs', () => {
-      const { messages } = resolveInterrupt(baseHandle, [{ toolCallId: 'tc1', action: 'approve' }]);
-      expect(messages[2].content[0].args).toEqual({ path: '/tmp' });
-    });
-
-    it('uses editedArgs when provided', () => {
+    it('includes editedArgs in output when provided', () => {
       const { messages } = resolveInterrupt(baseHandle, [
         { toolCallId: 'tc1', action: 'approve', editedArgs: { path: '/home' } },
       ]);
-      expect(messages[2].content[0].args).toEqual({ path: '/home' });
-      expect(messages[2].content[0].result).toContain('Args edited to');
+      expect(messages[2].content[0].output.value).toContain('Args edited to');
+      expect(messages[2].content[0].output.value).toContain('/home');
     });
   });
 
   describe('deny', () => {
-    it('appends tool message with [DENIED] result', () => {
+    it('appends tool message with execution-denied output', () => {
       const { messages } = resolveInterrupt(baseHandle, [{ toolCallId: 'tc1', action: 'deny' }]);
-      expect(messages[2].content[0].result).toContain('[DENIED]');
+      expect(messages[2].content[0].output.type).toBe('execution-denied');
+      expect(messages[2].content[0].output.reason).toContain('denied');
     });
 
     it('missing decision treated as deny', () => {
       const { messages } = resolveInterrupt(baseHandle, []);
-      expect(messages[2].content[0].result).toContain('[DENIED]');
+      expect(messages[2].content[0].output.type).toBe('execution-denied');
     });
   });
 
@@ -203,8 +201,8 @@ describe('resolveInterrupt', () => {
       ]);
       const toolMsg = messages[2];
       expect(toolMsg.content).toHaveLength(2);
-      expect(toolMsg.content[0].result).toContain('[APPROVED]');
-      expect(toolMsg.content[1].result).toContain('[DENIED]');
+      expect(toolMsg.content[0].output.value).toContain('[APPROVED]');
+      expect(toolMsg.content[1].output.type).toBe('execution-denied');
     });
 
     it('undecided approvals default to deny', () => {
@@ -212,7 +210,7 @@ describe('resolveInterrupt', () => {
         { toolCallId: 'tc1', action: 'approve' },
         // tc2 not in decisions → denied
       ]);
-      expect(messages[2].content[1].result).toContain('[DENIED]');
+      expect(messages[2].content[1].output.type).toBe('execution-denied');
     });
   });
 
@@ -245,7 +243,7 @@ describe('resolveInterrupt', () => {
 
       expect(messages[0].role).toBe('user');
       expect(messages[messages.length - 1].role).toBe('tool');
-      expect(messages[messages.length - 1].content[0].result).toContain('[APPROVED]');
+      expect(messages[messages.length - 1].content[0].output.value).toContain('[APPROVED]');
     });
   });
 });

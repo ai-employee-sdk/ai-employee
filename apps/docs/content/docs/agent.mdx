@@ -26,12 +26,12 @@ const agent = new EmployeeAgent({
   tools: {
     search: tool({
       description: 'Search the web',
-      parameters: z.object({ query: z.string() }),
+      inputSchema: z.object({ query: z.string() }),
       execute: async ({ query }) => `Results for: ${query}`,
     }),
     sendSlack: tool({
       description: 'Send a Slack message',
-      parameters: z.object({ channel: z.string(), text: z.string() }),
+      inputSchema: z.object({ channel: z.string(), text: z.string() }),
       execute: async ({ channel, text }) => `Sent to ${channel}`,
     }),
   },

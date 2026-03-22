@@ -35,7 +35,7 @@ export function registerListeners(app: App): void {
 
     try {
       const store = await createStore();
-      const prompt = user ? `[User <@${user}>]: ${userMessage}` : userMessage;
+      const prompt = `[Channel ${channel}] [User <@${user}>]: ${userMessage}`;
 
       const result = await runCoworker(store, client as any, prompt);
 
@@ -61,54 +61,45 @@ export function registerListeners(app: App): void {
         // Save handle to store for later retrieval
         await store.set(`interrupt:${handle.id}`, handle, 86400_000); // 24h TTL
 
-        // Post approval buttons for each pending tool call
-        for (const pending of result.pending) {
-          await client.chat.postMessage({
-            channel,
-            thread_ts: replyTs,
-            text: `I need approval to run *${pending.toolName}*`,
-            blocks: [
-              {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: [
-                    `:rotating_light: *Approval needed:* \`${pending.toolName}\``,
-                    "```",
-                    JSON.stringify(pending.args, null, 2),
-                    "```",
-                  ].join("\n"),
+        // Post a single approval message listing all pending tools
+        const toolSummary = result.pending
+          .map((p) => `:rotating_light: \`${p.toolName}\`\n\`\`\`${JSON.stringify(p.args, null, 2)}\`\`\``)
+          .join("\n\n");
+
+        await client.chat.postMessage({
+          channel,
+          thread_ts: replyTs,
+          text: `I need approval to run ${result.pending.length} tool(s)`,
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*Approval needed* (${result.pending.length} tool${result.pending.length > 1 ? "s" : ""}):\n\n${toolSummary}`,
+              },
+            },
+            {
+              type: "actions",
+              block_id: `interrupt_${handle.id}`,
+              elements: [
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: "Approve All", emoji: true },
+                  style: "primary",
+                  action_id: "interrupt_approve",
+                  value: JSON.stringify({ handleId: handle.id }),
                 },
-              },
-              {
-                type: "actions",
-                block_id: `interrupt_${handle.id}`,
-                elements: [
-                  {
-                    type: "button",
-                    text: { type: "plain_text", text: "Approve", emoji: true },
-                    style: "primary",
-                    action_id: "interrupt_approve",
-                    value: JSON.stringify({
-                      handleId: handle.id,
-                      toolCallId: pending.toolCallId,
-                    }),
-                  },
-                  {
-                    type: "button",
-                    text: { type: "plain_text", text: "Deny", emoji: true },
-                    style: "danger",
-                    action_id: "interrupt_deny",
-                    value: JSON.stringify({
-                      handleId: handle.id,
-                      toolCallId: pending.toolCallId,
-                    }),
-                  },
-                ],
-              },
-            ],
-          });
-        }
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: "Deny All", emoji: true },
+                  style: "danger",
+                  action_id: "interrupt_deny",
+                  value: JSON.stringify({ handleId: handle.id }),
+                },
+              ],
+            },
+          ],
+        });
       }
     } catch (err) {
       logger.error("app_mention handler failed:", err);
@@ -169,42 +160,44 @@ export function registerListeners(app: App): void {
         // Agent hit ANOTHER CONFIRM — save new handle, post new buttons
         await store.set(`interrupt:${result.handle.id}`, result.handle, 86400_000);
 
-        for (const pending of result.pending) {
-          await client.chat.postMessage({
-            channel,
-            thread_ts: threadTs,
-            text: `I need another approval to run *${pending.toolName}*`,
-            blocks: [
-              {
-                type: "section",
-                text: {
-                  type: "mrkdwn",
-                  text: `:rotating_light: *Another approval needed:* \`${pending.toolName}\`\n\`\`\`${JSON.stringify(pending.args, null, 2)}\`\`\``,
+        const toolSummary = result.pending
+          .map((p) => `:rotating_light: \`${p.toolName}\`\n\`\`\`${JSON.stringify(p.args, null, 2)}\`\`\``)
+          .join("\n\n");
+
+        await client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: `I need another approval for ${result.pending.length} tool(s)`,
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*Another approval needed* (${result.pending.length} tool${result.pending.length > 1 ? "s" : ""}):\n\n${toolSummary}`,
+              },
+            },
+            {
+              type: "actions",
+              block_id: `interrupt_${result.handle.id}`,
+              elements: [
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: "Approve All", emoji: true },
+                  style: "primary",
+                  action_id: "interrupt_approve",
+                  value: JSON.stringify({ handleId: result.handle.id }),
                 },
-              },
-              {
-                type: "actions",
-                block_id: `interrupt_${result.handle.id}`,
-                elements: [
-                  {
-                    type: "button",
-                    text: { type: "plain_text", text: "Approve", emoji: true },
-                    style: "primary",
-                    action_id: "interrupt_approve",
-                    value: JSON.stringify({ handleId: result.handle.id, toolCallId: pending.toolCallId }),
-                  },
-                  {
-                    type: "button",
-                    text: { type: "plain_text", text: "Deny", emoji: true },
-                    style: "danger",
-                    action_id: "interrupt_deny",
-                    value: JSON.stringify({ handleId: result.handle.id, toolCallId: pending.toolCallId }),
-                  },
-                ],
-              },
-            ],
-          });
-        }
+                {
+                  type: "button",
+                  text: { type: "plain_text", text: "Deny All", emoji: true },
+                  style: "danger",
+                  action_id: "interrupt_deny",
+                  value: JSON.stringify({ handleId: result.handle.id }),
+                },
+              ],
+            },
+          ],
+        });
       }
     } catch (err) {
       logger.error("interrupt_approve handler failed:", err);
