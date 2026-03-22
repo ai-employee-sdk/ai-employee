@@ -1,0 +1,48 @@
+---
+title: Changelog
+description: Release history for @ai-employee-sdk/core.
+---
+
+## v0.2.0
+
+**2026-03-21**
+
+### New Features
+
+- **`createCostTracker`**:Stateful per-model cost tracker with O(1) budget checks, cost snapshots, and reset. Replaces the stateless `budgetExceeded` for long-running agents.
+- **`DEFAULT_MODEL_PRICING`**:Built-in pricing map for 13 models: OpenAI (gpt-4o, gpt-4.1, o3, o4-mini), Anthropic (claude-sonnet-4, claude-3-5-haiku), Google (gemini-2.5-pro/flash, gemini-2.0-flash).
+- **`extractPendingApprovals`**:Extract tool calls awaiting human approval from `generateText` results.
+- **`createInterruptHandle`**:Create serializable JSON handles for interrupted agent state. Safe for KV/DB storage.
+- **`resolveInterrupt`**:Pure function to apply human decisions (approve/deny/edit args) and produce resumption messages.
+- **`InMemoryStore`**:Zero-dependency `MemoryStore` implementation with lazy TTL evaluation.
+- **`EmployeeAgent`**:Agent class composing membrane + memory + prepareStep + stop conditions. Delegates to `ToolLoopAgent`.
+- **`createAuditLogger`**:Callbacks for tool call and step observability pipelines.
+
+### Improvements
+
+- `budgetExceeded` now supports per-model pricing via `pricing` parameter (in addition to flat-rate mode from v0.1).
+- `composePrepareStep` merge rules documented and tested: system concatenates, activeTools intersects, model/toolChoice last-writer-wins, experimental_context/providerOptions deep-merge.
+
+### Test Coverage
+
+- 215 tests across all modules.
+
+---
+
+## v0.1.0
+
+**2026-03-14**
+
+### Initial Release
+
+- **`membrane`**:4-tier permission system (auto, draft, confirm, block) for AI SDK tools.
+- **`resolveTier` / `explainTier`**:Tier resolution with explicit tiers, custom resolve function, glob patterns, and configurable default.
+- **`composePrepareStep`**:Compose multiple `prepareStep` functions with deterministic merge rules.
+- **`createMemoryPrepareStep`**:Frozen-snapshot memory injection at step 0 from any `MemoryStore`.
+- **`createHeartbeat`**:Always-on tick function with concurrency guard and circuit breaker.
+- **`budgetExceeded`**:Stateless stop condition for token and flat-rate USD budgets.
+- **`tokenVelocityExceeded`**:Stop condition for detecting runaway token velocity.
+
+### Peer Dependencies
+
+- Requires `ai >= 7.0.0-beta.30`.

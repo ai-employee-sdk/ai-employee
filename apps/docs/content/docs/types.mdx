@@ -1,0 +1,341 @@
+---
+title: Types Reference
+description: All TypeScript type exports from @ai-employee-sdk/core.
+---
+
+All types are exported from `@ai-employee-sdk/core` as type-only exports.
+
+```typescript
+import type { Tier, MembraneConfig, /* ... */ } from '@ai-employee-sdk/core';
+```
+
+## Tier System
+
+### `Tier`
+
+```typescript
+type Tier = 'auto' | 'draft' | 'confirm' | 'block';
+```
+
+### `TierPattern`
+
+```typescript
+interface TierPattern {
+  /** Glob pattern: 'mcp_*', '*_dangerous', 'exactName' */
+  match: string;
+  tier: Tier;
+  /** Human-readable reason for this pattern */
+  description?: string;
+}
+```
+
+### `TierResolution`
+
+```typescript
+interface TierResolution {
+  tier: Tier;
+  source: 'explicit' | 'resolve' | 'pattern' | 'default';
+  description?: string;
+  /** Index of matched pattern (only when source is 'pattern') */
+  patternIndex?: number;
+}
+```
+
+## Membrane
+
+### `MembraneConfig<TOOLS>`
+
+```typescript
+interface MembraneConfig<TOOLS extends Record<string, any> = Record<string, any>> {
+  tools: TOOLS;
+  tiers?: {
+    auto?: string[];
+    draft?: string[];
+    confirm?: string[];
+    block?: string[];
+  };
+  resolve?: (toolName: string) => Tier | undefined;
+  patterns?: TierPattern[];
+  default?: Tier; // Default: 'confirm'
+}
+```
+
+### `MembraneResult<TOOLS>`
+
+```typescript
+interface MembraneResult<TOOLS extends Record<string, any> = Record<string, any>> {
+  tools: TOOLS;
+  prepareStep: PrepareStepFunction;
+  onToolCallFinish: (event: {
+    toolCall: { toolName: string; args: unknown };
+    success?: boolean;
+    output?: unknown;
+    error?: unknown;
+    stepNumber: number;
+  }) => void;
+  auditLog: AuditEntry[];
+}
+```
+
+### `AuditEntry`
+
+```typescript
+interface AuditEntry {
+  timestamp: number;
+  toolName: string;
+  input: unknown;
+  output: unknown;
+  tier: Tier;
+  /** true for BLOCK tier tools */
+  blocked?: boolean;
+  stepNumber: number;
+}
+```
+
+## Memory
+
+### `MemoryStore`
+
+```typescript
+interface MemoryStore {
+  get<T = unknown>(key: string): Promise<T | null>;
+  set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void>;
+  list(prefix?: string): Promise<string[]>;
+  delete(key: string): Promise<void>;
+}
+```
+
+### `MemoryPrepareStepConfig`
+
+```typescript
+interface MemoryPrepareStepConfig {
+  /** Max token budget for memory injection. Default: 2000 */
+  maxTokenBudget?: number;
+  /** Specific memory keys to inject. Overrides prefix listing. */
+  memoryKeys?: string[];
+  /** Prefix for memory keys in the store. Default: 'memory:' */
+  prefix?: string;
+}
+```
+
+## Cost Tracking
+
+### `ModelPricing`
+
+```typescript
+interface ModelPricing {
+  /** Cost per 1M input tokens in USD */
+  inputPerMToken: number;
+  /** Cost per 1M output tokens in USD */
+  outputPerMToken: number;
+  /** Cost per 1M reasoning tokens (o3, etc.) */
+  reasoningPerMToken?: number;
+  /** Cost per 1M cached input tokens (Anthropic caching) */
+  cachedInputPerMToken?: number;
+}
+```
+
+### `CostTrackerConfig`
+
+```typescript
+interface CostTrackerConfig {
+  /** Maximum budget in USD */
+  budget: number;
+  /** Pricing per model ID */
+  pricing: Record<string, ModelPricing>;
+}
+```
+
+### `CostTrackerResult`
+
+```typescript
+interface CostTrackerResult {
+  onStepFinish: (event: any) => void;
+  stopCondition: (options: { steps: any[] }) => boolean;
+  snapshot: () => CostSnapshot;
+  reset: () => void;
+}
+```
+
+### `CostSnapshot`
+
+```typescript
+interface CostSnapshot {
+  totalCostUsd: number;
+  remainingUsd: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalReasoningTokens: number;
+  totalCachedInputTokens: number;
+  steps: number;
+  byModel: Record<string, {
+    inputTokens: number;
+    outputTokens: number;
+    reasoningTokens: number;
+    cachedInputTokens: number;
+    costUsd: number;
+  }>;
+  budgetExhausted: boolean;
+}
+```
+
+## Stop Conditions
+
+### `BudgetConfig`
+
+```typescript
+interface BudgetConfig {
+  maxTokens?: number;
+  maxCostUsd?: number;
+  costPerInputToken?: number;
+  costPerOutputToken?: number;
+  pricing?: Record<string, ModelPricing>;
+}
+```
+
+### `VelocityConfig`
+
+```typescript
+interface VelocityConfig {
+  /** Max average tokens per step */
+  maxAvgPerStep: number;
+  /** Number of recent steps to consider. Default: all */
+  windowSize?: number;
+}
+```
+
+## Interrupts
+
+### `PendingApproval`
+
+```typescript
+interface PendingApproval {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+  stepNumber: number;
+}
+```
+
+### `InterruptDecision`
+
+```typescript
+interface InterruptDecision {
+  toolCallId: string;
+  action: 'approve' | 'deny';
+  /** Modified args (only for approve) */
+  editedArgs?: unknown;
+}
+```
+
+### `InterruptHandle`
+
+```typescript
+interface InterruptHandle {
+  /** UUID for KV key construction */
+  id: string;
+  /** ISO timestamp */
+  createdAt: string;
+  /** Full message history up to interruption */
+  messages: any[];
+  /** Tool calls awaiting decisions */
+  pendingApprovals: PendingApproval[];
+  /** All tool calls from the interrupted step */
+  interruptedStepToolCalls: Array<{
+    toolCallId: string;
+    toolName: string;
+    args: unknown;
+  }>;
+  /** Cumulative token usage for budget continuity */
+  previousUsage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+}
+```
+
+## Heartbeat
+
+### `CheckWorkFn`
+
+```typescript
+type CheckWorkFn = () => Promise<string | null>;
+```
+
+### `HeartbeatConfig`
+
+```typescript
+interface HeartbeatConfig {
+  checkWork: CheckWorkFn;
+  state?: MemoryStore;
+  /** Default: 5 */
+  maxConsecutiveErrors?: number;
+  signal?: AbortSignal;
+}
+```
+
+### `HeartbeatResult`
+
+```typescript
+interface HeartbeatResult {
+  tick: () => Promise<{ prompt: string; response: unknown } | null>;
+  isRunning: () => boolean;
+}
+```
+
+## Audit Logger
+
+### `AuditLoggerConfig`
+
+```typescript
+interface AuditLoggerConfig {
+  onToolCall?: (entry: {
+    toolName: string;
+    input: unknown;
+    stepNumber: number;
+    timestamp: number;
+  }) => void;
+  onStep?: (entry: {
+    stepNumber: number;
+    finishReason: string;
+    usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+    timestamp: number;
+  }) => void;
+}
+```
+
+### `AuditLoggerResult`
+
+```typescript
+interface AuditLoggerResult {
+  onToolCallStart: (event: any) => void;
+  onToolCallFinish: (event: any) => void;
+  onStepFinish: (event: any) => void;
+}
+```
+
+## EmployeeAgent
+
+### `EmployeeAgentConfig<TOOLS>`
+
+```typescript
+interface EmployeeAgentConfig<TOOLS extends Record<string, any> = Record<string, never>> {
+  model: LanguageModel;
+  instructions?: string;
+  id?: string;
+  tools?: TOOLS;
+  /** Membrane config (tools passed separately via config.tools) */
+  membrane?: Omit<MembraneConfig, 'tools'>;
+  memory?: {
+    store: MemoryStore;
+    config?: MemoryPrepareStepConfig;
+  };
+  prepareStep?: PrepareStepFunction | PrepareStepFunction[];
+  stopWhen?: StopCondition | StopCondition[];
+  onStepFinish?: (event: any) => void;
+  onFinish?: (event: any) => void;
+  /** Default: 20 */
+  maxSteps?: number;
+}
+```

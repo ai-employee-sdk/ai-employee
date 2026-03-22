@@ -1,0 +1,140 @@
+---
+title: Audit Logging
+description: Capture tool call and step events for observability pipelines.
+---
+
+The membrane already tracks every tool call in `m.auditLog`. For sending events to an external system (Datadog, a logging pipeline, Slack), `createAuditLogger` gives you callbacks for tool call starts, finishes, and step completions that you wire into `generateText` directly.
+
+## Basic Usage
+
+```typescript
+import { createAuditLogger } from '@ai-employee-sdk/core';
+import { generateText } from 'ai';
+import { openai } from '@ai-sdk/openai';
+
+const audit = createAuditLogger({
+  onToolCall: (entry) => {
+    console.log(`[${new Date(entry.timestamp).toISOString()}] Tool: ${entry.toolName}`);
+    console.log('  Input:', JSON.stringify(entry.input));
+    console.log('  Step:', entry.stepNumber);
+  },
+  onStep: (entry) => {
+    console.log(`[${new Date(entry.timestamp).toISOString()}] Step ${entry.stepNumber} finished`);
+    console.log('  Reason:', entry.finishReason);
+    console.log('  Tokens:', entry.usage.totalTokens);
+  },
+});
+
+const result = await generateText({
+  model: openai('gpt-4o'),
+  tools: { /* ... */ },
+  experimental_onToolCallStart: audit.onToolCallStart,
+  experimental_onToolCallFinish: audit.onToolCallFinish,
+  onStepFinish: audit.onStepFinish,
+  maxSteps: 10,
+  prompt: '...',
+});
+```
+
+## Sending to External Systems
+
+```typescript
+const audit = createAuditLogger({
+  onToolCall: async (entry) => {
+    // Send to your observability pipeline
+    await fetch('https://logs.example.com/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'tool_call',
+        ...entry,
+      }),
+    });
+  },
+  onStep: async (entry) => {
+    await fetch('https://logs.example.com/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'step',
+        ...entry,
+      }),
+    });
+  },
+});
+```
+
+## With EmployeeAgent
+
+When using `EmployeeAgent`, the membrane already provides an audit log. Use `createAuditLogger` for additional logging (e.g., sending to external systems):
+
+```typescript
+import { EmployeeAgent, createAuditLogger } from '@ai-employee-sdk/core';
+
+const audit = createAuditLogger({
+  onToolCall: (entry) => console.log('Tool:', entry.toolName),
+  onStep: (entry) => console.log('Step:', entry.stepNumber),
+});
+
+const agent = new EmployeeAgent({
+  model: openai('gpt-4o'),
+  tools: { /* ... */ },
+  onStepFinish: audit.onStepFinish,
+});
+
+// The membrane audit log is also available:
+// agent.auditLog → AuditEntry[]
+```
+
+## Audit Logger vs Membrane Audit Log
+
+| Feature | `createAuditLogger` | Membrane `auditLog` |
+|---------|--------------------|--------------------|
+| **Purpose** | External observability | In-memory inspection |
+| **Format** | Custom callbacks (you choose the shape) | `AuditEntry[]` (fixed schema) |
+| **Includes tier info** | No (raw tool call events) | Yes (tier, blocked flag) |
+| **Persistence** | You handle it | In-memory array (max 1,000) |
+| **When to use** | Logging pipelines, monitoring, analytics | Debugging, post-run inspection |
+
+## Reference
+
+### `createAuditLogger(config)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `config.onToolCall` | `(entry) => void` | Called on tool call start and finish |
+| `config.onStep` | `(entry) => void` | Called when a step finishes |
+
+**Returns:** `AuditLoggerResult`
+
+| Property | Type | Wire to |
+|----------|------|---------|
+| `onToolCallStart` | `(event) => void` | `experimental_onToolCallStart` |
+| `onToolCallFinish` | `(event) => void` | `experimental_onToolCallFinish` |
+| `onStepFinish` | `(event) => void` | `onStepFinish` |
+
+### onToolCall Entry
+
+```typescript
+{
+  toolName: string;
+  input: unknown;
+  stepNumber: number;
+  timestamp: number; // Date.now()
+}
+```
+
+### onStep Entry
+
+```typescript
+{
+  stepNumber: number;
+  finishReason: string;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  timestamp: number;
+}
+```

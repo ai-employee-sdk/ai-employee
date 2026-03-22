@@ -1,0 +1,88 @@
+---
+title: API Reference
+description: Flat reference table for all 16 runtime exports from @ai-employee-sdk/core.
+---
+
+All exports from `@ai-employee-sdk/core`. For type definitions, see [Types Reference](./types).
+
+## Functions
+
+| Export | Signature | Description | Docs |
+|--------|-----------|-------------|------|
+| `membrane` | `(config: MembraneConfig<TOOLS>) => MembraneResult<TOOLS>` | Creates a 4-tier permission system for tools | [Membrane](./membrane) |
+| `resolveTier` | `(toolName: string, config: MembraneConfig) => Tier` | Resolves a tool name to its tier | [Membrane](./membrane#debugging-tier-resolution) |
+| `explainTier` | `(toolName: string, config: MembraneConfig) => TierResolution` | Resolves tier with explanation (source, pattern index) | [Membrane](./membrane#debugging-tier-resolution) |
+| `composePrepareStep` | `(...fns: (PrepareStepFn \| undefined \| null)[]) => PrepareStepFn` | Composes multiple prepareStep functions with deterministic merge rules | [Memory](./memory#composepreparestep) |
+| `createMemoryPrepareStep` | `(store: MemoryStore, config?: MemoryPrepareStepConfig) => PrepareStepFn` | Creates a prepareStep that injects memories at step 0 | [Memory](./memory) |
+| `createCostTracker` | `(config: CostTrackerConfig) => CostTrackerResult` | Stateful per-model cost tracker with budget enforcement | [Cost Tracking](./cost-tracking) |
+| `budgetExceeded` | `(config: BudgetConfig) => StopCondition` | Stateless stop condition for token/USD budgets | [Cost Tracking](./cost-tracking#budgetexceeded) |
+| `tokenVelocityExceeded` | `(config: VelocityConfig) => StopCondition` | Stop condition for runaway token velocity | [Cost Tracking](./cost-tracking#tokenvelocityexceeded) |
+| `extractPendingApprovals` | `(result: any) => PendingApproval[]` | Extracts tool calls awaiting approval from generateText result | [Interrupts](./interrupts) |
+| `createInterruptHandle` | `(result: any, pendingApprovals: PendingApproval[]) => InterruptHandle` | Creates a serializable JSON handle for interrupted state | [Interrupts](./interrupts) |
+| `resolveInterrupt` | `(handle: InterruptHandle, decisions: InterruptDecision[]) => { messages, previousUsage }` | Pure function. Applies human decisions to produce resumption messages | [Interrupts](./interrupts) |
+| `createHeartbeat` | `(agent, config: HeartbeatConfig) => HeartbeatResult` | Always-on tick function with concurrency guard and circuit breaker | [Agent](./agent#heartbeat) |
+| `createAuditLogger` | `(config: AuditLoggerConfig) => AuditLoggerResult` | Creates callbacks for tool call and step observability | [Audit](./audit) |
+
+## Classes
+
+| Export | Description | Docs |
+|--------|-------------|------|
+| `EmployeeAgent` | Agent implementation composing membrane + memory + prepareStep + stop conditions. Delegates to `ToolLoopAgent`. | [Agent](./agent) |
+| `InMemoryStore` | Zero-dependency `MemoryStore` implementation with lazy TTL. For tests and development. | [Memory](./memory#inmemorystore) |
+
+## Constants
+
+| Export | Type | Description |
+|--------|------|-------------|
+| `DEFAULT_MODEL_PRICING` | `Record<string, ModelPricing>` | Built-in pricing for OpenAI, Anthropic, and Google models (March 2025) |
+
+## Import
+
+```typescript
+// Runtime exports
+import {
+  membrane,
+  resolveTier,
+  explainTier,
+  composePrepareStep,
+  createMemoryPrepareStep,
+  createCostTracker,
+  DEFAULT_MODEL_PRICING,
+  budgetExceeded,
+  tokenVelocityExceeded,
+  extractPendingApprovals,
+  createInterruptHandle,
+  resolveInterrupt,
+  createHeartbeat,
+  createAuditLogger,
+  EmployeeAgent,
+  InMemoryStore,
+} from '@ai-employee-sdk/core';
+
+// Type-only exports
+import type {
+  Tier,
+  TierPattern,
+  TierResolution,
+  MemoryStore,
+  MembraneConfig,
+  MembraneResult,
+  AuditEntry,
+  HeartbeatConfig,
+  HeartbeatResult,
+  CheckWorkFn,
+  MemoryPrepareStepConfig,
+  ModelPricing,
+  BudgetConfig,
+  VelocityConfig,
+  AuditLoggerConfig,
+  AuditLoggerResult,
+  EmployeeAgentConfig,
+  CostTrackerConfig,
+  CostSnapshot,
+  CostTrackerResult,
+  PendingApproval,
+  InterruptDecision,
+  InterruptHandle,
+} from '@ai-employee-sdk/core';
+```

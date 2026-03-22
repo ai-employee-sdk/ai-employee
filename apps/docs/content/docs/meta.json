@@ -1,0 +1,20 @@
+{
+  "title": "@ai-employee-sdk/core",
+  "pages": [
+    "index",
+    "quick-start",
+    "---Guides---",
+    "membrane",
+    "cost-tracking",
+    "interrupts",
+    "memory",
+    "agent",
+    "audit",
+    "---API Reference---",
+    "api-reference",
+    "types",
+    "---Resources---",
+    "examples",
+    "changelog"
+  ]
+}

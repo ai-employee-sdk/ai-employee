@@ -1,0 +1,130 @@
+---
+title: Quick Start
+description: Get a production-ready autonomous agent running in under 50 lines of TypeScript.
+---
+
+## Install
+
+```bash
+npm install @ai-employee-sdk/core ai @ai-sdk/openai
+```
+
+## Minimal Agent
+
+`EmployeeAgent` composes membrane, memory, and cost tracking into one AI SDK `Agent`.
+
+```typescript
+import { openai } from '@ai-sdk/openai';
+import { generateText, tool } from 'ai';
+import { EmployeeAgent, DEFAULT_MODEL_PRICING } from '@ai-employee-sdk/core';
+import { z } from 'zod';
+
+const agent = new EmployeeAgent({
+  model: openai('gpt-4o'),
+  instructions: 'You are a helpful assistant.',
+  maxSteps: 10,
+  tools: {
+    getWeather: tool({
+      description: 'Get current weather for a city',
+      parameters: z.object({ city: z.string() }),
+      execute: async ({ city }) => `72°F and sunny in ${city}`,
+    }),
+    sendEmail: tool({
+      description: 'Send an email',
+      parameters: z.object({ to: z.string(), body: z.string() }),
+      execute: async ({ to, body }) => `Email sent to ${to}`,
+    }),
+  },
+  membrane: {
+    tiers: {
+      auto: ['getWeather'],
+      confirm: ['sendEmail'],
+    },
+  },
+});
+
+const result = await generateText({
+  agent,
+  prompt: 'What is the weather in San Francisco?',
+});
+
+console.log(result.text);
+```
+
+`getWeather` runs automatically. `sendEmail` requires human approval (the agent loop pauses via `needsApproval`).
+
+## Using Primitives Directly
+
+If you want full control, skip `EmployeeAgent` and wire primitives into `generateText` yourself.
+
+```typescript
+import { openai } from '@ai-sdk/openai';
+import { generateText, tool } from 'ai';
+import {
+  membrane,
+  createCostTracker,
+  DEFAULT_MODEL_PRICING,
+  composePrepareStep,
+} from '@ai-employee-sdk/core';
+import { z } from 'zod';
+
+const tools = {
+  getWeather: tool({
+    description: 'Get current weather',
+    parameters: z.object({ city: z.string() }),
+    execute: async ({ city }) => `72°F in ${city}`,
+  }),
+  deleteUser: tool({
+    description: 'Delete a user account',
+    parameters: z.object({ userId: z.string() }),
+    execute: async ({ userId }) => `Deleted ${userId}`,
+  }),
+};
+
+// 1. Membrane: permission tiers
+const m = membrane({
+  tools,
+  tiers: {
+    auto: ['getWeather'],
+    block: ['deleteUser'],
+  },
+});
+
+// 2. Cost tracker: $0.50 budget
+const cost = createCostTracker({
+  budget: 0.5,
+  pricing: DEFAULT_MODEL_PRICING,
+});
+
+// 3. Wire into generateText
+const result = await generateText({
+  model: openai('gpt-4o'),
+  tools: m.tools,
+  prepareStep: m.prepareStep,
+  experimental_onToolCallFinish: m.onToolCallFinish,
+  onStepFinish: cost.onStepFinish,
+  stopWhen: cost.stopCondition,
+  maxSteps: 10,
+  prompt: 'Delete user 123 and check the weather in Tokyo.',
+});
+
+// deleteUser was blocked — never executed
+// getWeather ran automatically
+console.log(result.text);
+console.log(cost.snapshot());
+// { totalCostUsd: 0.002, remainingUsd: 0.498, steps: 2, ... }
+```
+
+## Next Steps
+
+<Cards>
+  <Card title="Membrane & Tiers" href="./membrane">
+    Glob patterns, custom resolvers, tier resolution order.
+  </Card>
+  <Card title="Cost Tracking" href="./cost-tracking">
+    Per-model pricing, shared budgets, cost snapshots.
+  </Card>
+  <Card title="Interrupts" href="./interrupts">
+    Pause, serialize, resume with human decisions.
+  </Card>
+</Cards>

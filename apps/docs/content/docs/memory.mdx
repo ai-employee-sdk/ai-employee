@@ -1,0 +1,210 @@
+---
+title: Memory & Composition
+description: Inject memories into the agent loop and compose multiple prepareStep functions with deterministic merge rules.
+---
+
+Every `generateText` call starts from scratch. The agent doesn't know the user's name, what happened last run, or the decision your team made three weeks ago. All of that context vanishes between API calls.
+
+`createMemoryPrepareStep` pulls persistent context from a store and injects it into the system prompt before the agent starts thinking. `composePrepareStep` lets you stack that alongside other context layers (tool permissions from membrane, per-user preferences, custom instructions) with merge rules where security layers can only restrict, never widen access.
+
+Two primitives that work together:
+
+- **`createMemoryPrepareStep`**: reads from a `MemoryStore` and injects context as a system message.
+- **`composePrepareStep`**: merges multiple `prepareStep` functions with deterministic rules.
+
+## Memory Injection
+
+```typescript
+import { createMemoryPrepareStep, InMemoryStore } from '@ai-employee-sdk/core';
+import { generateText } from 'ai';
+import { openai } from '@ai-sdk/openai';
+
+const store = new InMemoryStore();
+await store.set('memory:user-preferences', { theme: 'dark', language: 'en' });
+await store.set('memory:recent-context', 'User is working on a billing feature');
+
+const memoryStep = createMemoryPrepareStep(store);
+
+const result = await generateText({
+  model: openai('gpt-4o'),
+  prepareStep: memoryStep,
+  maxSteps: 5,
+  prompt: 'What should I work on next?',
+});
+```
+
+At step 0, the agent receives a system message like:
+
+```xml
+<memories>
+[memory:user-preferences]: {"theme":"dark","language":"en"}
+[memory:recent-context]: "User is working on a billing feature"
+</memories>
+```
+
+### Frozen Snapshot
+
+Memory is read once at step 0 and cached. The agent sees the same snapshot for the entire run. It won't pick up changes you make to the store mid-execution. This keeps the system message identical across steps, which means better KV cache hits from the model provider and no repeated store reads during the agent loop.
+
+### Configuration
+
+```typescript
+const memoryStep = createMemoryPrepareStep(store, {
+  prefix: 'ctx:',              // key prefix to filter (default: 'memory:')
+  memoryKeys: ['ctx:user'],    // explicit keys instead of listing by prefix
+  maxTokenBudget: 4000,        // max tokens for memory injection (default: 2000)
+});
+```
+
+Token budget uses a rough estimate of 1 token per 4 characters. When the budget is exceeded, entire key-value pairs are dropped (not truncated mid-value).
+
+## MemoryStore Interface
+
+Any object implementing this interface works with `createMemoryPrepareStep`:
+
+```typescript
+interface MemoryStore {
+  get<T>(key: string): Promise<T | null>;
+  set<T>(key: string, value: T, ttlMs?: number): Promise<void>;
+  list(prefix?: string): Promise<string[]>;
+  delete(key: string): Promise<void>;
+}
+```
+
+### InMemoryStore
+
+Zero-dependency implementation for tests and development:
+
+```typescript
+import { InMemoryStore } from '@ai-employee-sdk/core';
+
+const store = new InMemoryStore();
+
+await store.set('key', 'value');
+await store.set('temp', 'expires', 60_000); // TTL: 60 seconds
+
+const val = await store.get('key');     // 'value'
+const keys = await store.list('mem:');  // filtered by prefix
+
+store.clear(); // test teardown
+store.size;    // live (non-expired) count
+```
+
+TTL is lazy-evaluated: expired entries are cleaned up on `get`, `list`, and `size` access. No timers, no dangling `setTimeout`.
+
+### Custom Implementations
+
+Implement `MemoryStore` for your persistence layer:
+
+```typescript
+import type { MemoryStore } from '@ai-employee-sdk/core';
+
+class RedisStore implements MemoryStore {
+  constructor(private redis: Redis) {}
+
+  async get<T>(key: string): Promise<T | null> {
+    const val = await this.redis.get(key);
+    return val ? JSON.parse(val) : null;
+  }
+
+  async set<T>(key: string, value: T, ttlMs?: number): Promise<void> {
+    if (ttlMs) {
+      await this.redis.set(key, JSON.stringify(value), 'PX', ttlMs);
+    } else {
+      await this.redis.set(key, JSON.stringify(value));
+    }
+  }
+
+  async list(prefix?: string): Promise<string[]> {
+    return this.redis.keys(prefix ? `${prefix}*` : '*');
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.redis.del(key);
+  }
+}
+```
+
+## composePrepareStep
+
+When you need multiple `prepareStep` functions (membrane + memory + custom logic), use `composePrepareStep` to merge them with deterministic rules.
+
+<Diagram src="/images/compose-merge.png" alt="composePrepareStep merge rules: system concatenates, activeTools intersects, model and toolChoice last writer wins, experimental_context deep merges" />
+
+```typescript
+import { composePrepareStep, membrane, createMemoryPrepareStep } from '@ai-employee-sdk/core';
+
+const m = membrane({ tools, tiers: { auto: ['readFile'] } });
+const memoryStep = createMemoryPrepareStep(store);
+
+const customStep = (options: any) => ({
+  system: 'Always respond in JSON format.',
+  toolChoice: 'auto' as const,
+});
+
+const composed = composePrepareStep(
+  m.prepareStep,
+  memoryStep,
+  customStep,
+);
+
+const result = await generateText({
+  model: openai('gpt-4o'),
+  tools: m.tools,
+  prepareStep: composed,
+  maxSteps: 10,
+  prompt: '...',
+});
+```
+
+### Merge Rules
+
+Each `prepareStep` function receives the **original** options (not the merged intermediate result). Results are merged after all functions run.
+
+| Property | Merge Strategy | Notes |
+|----------|---------------|-------|
+| `system` | **Concatenate** | Each layer adds context. Strings normalized to system message arrays. |
+| `activeTools` | **Intersect** | Most restrictive wins. If A returns `['a','b','c']` and B returns `['b','c','d']`, result is `['b','c']`. |
+| `model` | **Last writer wins** | Later functions override earlier ones. |
+| `toolChoice` | **Last writer wins** | Later functions override. |
+| `experimental_context` | **Deep merge** | By namespace. Non-conflicting keys are preserved. |
+| `providerOptions` | **Deep merge** | Non-conflicting keys are preserved. |
+| `messages` | **Last writer wins** | With a dev warning if multiple functions return messages. |
+
+<Callout type="warn">
+  `activeTools` uses intersection, so a function that returns a restricted set will filter out tools even if other functions include them. This is the "most restrictive wins" principle, which is critical for membrane's security guarantees.
+</Callout>
+
+### Null/Undefined Handling
+
+`composePrepareStep` filters out `null` and `undefined` from the input array. Functions that return `undefined` are skipped during merging.
+
+```typescript
+const composed = composePrepareStep(
+  m.prepareStep,
+  null,           // ignored
+  undefined,      // ignored
+  customStep,
+);
+```
+
+## Reference
+
+### `createMemoryPrepareStep(store, config?)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `store` | `MemoryStore` | Store to read memories from |
+| `config.prefix` | `string?` | Key prefix filter. Default: `'memory:'` |
+| `config.memoryKeys` | `string[]?` | Explicit keys to inject (overrides prefix listing) |
+| `config.maxTokenBudget` | `number?` | Max token budget. Default: `2000` |
+
+**Returns:** `PrepareStepFunction`
+
+### `composePrepareStep(...fns)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `...fns` | `(PrepareStepFn \| undefined \| null)[]` | Functions to compose |
+
+**Returns:** `PrepareStepFunction`

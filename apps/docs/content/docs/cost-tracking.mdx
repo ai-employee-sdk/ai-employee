@@ -1,0 +1,239 @@
+---
+title: Cost Tracking
+description: Per-model USD budgets with stop conditions and cost snapshots.
+---
+
+A tool loop with no budget can burn $50 before you notice. The model gets verbose, a tool keeps retrying, or the agent decides it needs "one more search." Your API bill spikes.
+
+Set a USD budget. The agent stops when it's spent. You get per-model breakdowns so you can see whether GPT-4o or Claude is eating the budget, and you can share a single tracker across multiple agents working on the same task.
+
+Two approaches to cost control, depending on what you need:
+
+- **`createCostTracker`**: stateful tracker with per-model pricing, budget enforcement, and detailed snapshots. The recommended approach.
+- **`budgetExceeded`**: stateless stop condition. Simpler, iterates all steps every call.
+
+## createCostTracker
+
+```typescript
+import { createCostTracker, DEFAULT_MODEL_PRICING } from '@ai-employee-sdk/core';
+import { generateText } from 'ai';
+import { openai } from '@ai-sdk/openai';
+
+const cost = createCostTracker({
+  budget: 1.00, // $1.00 USD
+  pricing: DEFAULT_MODEL_PRICING,
+});
+
+const result = await generateText({
+  model: openai('gpt-4o'),
+  maxSteps: 20,
+  onStepFinish: cost.onStepFinish,
+  stopWhen: cost.stopCondition,
+  prompt: 'Analyze this dataset...',
+});
+
+const snapshot = cost.snapshot();
+console.log(snapshot.totalCostUsd);    // 0.0234
+console.log(snapshot.remainingUsd);    // 0.9766
+console.log(snapshot.steps);           // 3
+console.log(snapshot.budgetExhausted); // false
+console.log(snapshot.byModel);
+// {
+//   'gpt-4o': {
+//     inputTokens: 1200,
+//     outputTokens: 450,
+//     reasoningTokens: 0,
+//     cachedInputTokens: 0,
+//     costUsd: 0.0234,
+//   },
+// }
+```
+
+### How It Works
+
+1. `onStepFinish` reads `event.response.modelId`, looks up pricing, and accumulates per-model costs.
+2. `stopCondition` returns `true` when `totalCostUsd >= budget`. This is O(1). It checks the accumulated total, not the step history.
+3. `snapshot()` returns a deep copy of the current state.
+4. `reset()` clears all accumulators for reuse across multiple runs.
+
+<Callout type="warn">
+  In development, a console warning is emitted if a model ID is not found in the pricing map. Add custom pricing to suppress the warning.
+</Callout>
+
+### Custom Pricing
+
+Override or extend the default pricing map:
+
+```typescript
+const cost = createCostTracker({
+  budget: 5.00,
+  pricing: {
+    ...DEFAULT_MODEL_PRICING,
+    'my-fine-tuned-model': {
+      inputPerMToken: 3.00,
+      outputPerMToken: 12.00,
+    },
+  },
+});
+```
+
+### Shared Budgets
+
+Share a single tracker across multiple agent runs:
+
+```typescript
+const cost = createCostTracker({
+  budget: 10.00,
+  pricing: DEFAULT_MODEL_PRICING,
+});
+
+// Run 1
+await generateText({
+  model: openai('gpt-4o'),
+  onStepFinish: cost.onStepFinish,
+  stopWhen: cost.stopCondition,
+  prompt: 'Task 1...',
+});
+
+// Run 2 — same budget continues
+await generateText({
+  model: openai('gpt-4o-mini'),
+  onStepFinish: cost.onStepFinish,
+  stopWhen: cost.stopCondition,
+  prompt: 'Task 2...',
+});
+
+console.log(cost.snapshot().byModel);
+// Shows breakdown for both gpt-4o and gpt-4o-mini
+```
+
+## DEFAULT_MODEL_PRICING
+
+Built-in pricing for common models (as of March 2025):
+
+| Model | Input ($/1M) | Output ($/1M) | Reasoning ($/1M) | Cached Input ($/1M) |
+|-------|-------------|---------------|------------------|---------------------|
+| `gpt-4o` | 2.50 | 10.00 | — | — |
+| `gpt-4o-mini` | 0.15 | 0.60 | — | — |
+| `gpt-4.1` | 2.00 | 8.00 | — | — |
+| `gpt-4.1-mini` | 0.40 | 1.60 | — | — |
+| `gpt-4.1-nano` | 0.10 | 0.40 | — | — |
+| `o3` | 2.00 | 8.00 | 12.00 | — |
+| `o3-mini` | 1.10 | 4.40 | 4.40 | — |
+| `o4-mini` | 1.10 | 4.40 | 4.40 | — |
+| `claude-sonnet-4-20250514` | 3.00 | 15.00 | — | 0.30 |
+| `claude-3-5-haiku-20241022` | 0.80 | 4.00 | — | 0.08 |
+| `gemini-2.5-pro` | 1.25 | 10.00 | — | — |
+| `gemini-2.5-flash` | 0.15 | 0.60 | 3.50 | — |
+| `gemini-2.0-flash` | 0.10 | 0.40 | — | — |
+
+## Stop Conditions
+
+### budgetExceeded
+
+Stateless stop condition. Iterates all steps on every call. Supports two cost modes:
+
+```typescript
+import { budgetExceeded } from '@ai-employee-sdk/core';
+
+// Token budget only
+const result = await generateText({
+  model: openai('gpt-4o'),
+  stopWhen: budgetExceeded({ maxTokens: 100_000 }),
+  prompt: '...',
+});
+
+// USD budget with per-model pricing
+const result2 = await generateText({
+  model: openai('gpt-4o'),
+  stopWhen: budgetExceeded({
+    maxCostUsd: 0.50,
+    pricing: DEFAULT_MODEL_PRICING,
+  }),
+  prompt: '...',
+});
+
+// USD budget with flat rate (legacy, v0.1 API)
+const result3 = await generateText({
+  model: openai('gpt-4o'),
+  stopWhen: budgetExceeded({
+    maxCostUsd: 0.50,
+    costPerInputToken: 0.0000025,
+    costPerOutputToken: 0.000010,
+  }),
+  prompt: '...',
+});
+```
+
+<Callout type="info">
+  `budgetExceeded` is stateless. It re-computes cost from all steps on every call. For long-running agents, prefer `createCostTracker` which accumulates O(1).
+</Callout>
+
+### tokenVelocityExceeded
+
+Detects runaway loops where the agent generates increasingly verbose output.
+
+```typescript
+import { tokenVelocityExceeded } from '@ai-employee-sdk/core';
+
+const result = await generateText({
+  model: openai('gpt-4o'),
+  stopWhen: tokenVelocityExceeded({
+    maxAvgPerStep: 5000,  // avg tokens per step
+    windowSize: 3,        // only look at last 3 steps
+  }),
+  prompt: '...',
+});
+```
+
+### Composing Stop Conditions
+
+Pass multiple stop conditions as an array to `stopWhen`:
+
+```typescript
+const cost = createCostTracker({ budget: 1.00, pricing: DEFAULT_MODEL_PRICING });
+
+const result = await generateText({
+  model: openai('gpt-4o'),
+  stopWhen: [
+    cost.stopCondition,
+    tokenVelocityExceeded({ maxAvgPerStep: 8000 }),
+  ],
+  prompt: '...',
+});
+```
+
+## Reference
+
+### `createCostTracker(config)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `config.budget` | `number` | Maximum budget in USD |
+| `config.pricing` | `Record<string, ModelPricing>` | Per-model pricing map |
+
+**Returns:** `CostTrackerResult`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `onStepFinish` | `(event) => void` | Plug into `generateText` `onStepFinish` |
+| `stopCondition` | `StopCondition` | Use as `stopWhen` |
+| `snapshot()` | `CostSnapshot` | Deep copy of current state |
+| `reset()` | `void` | Clear all accumulators |
+
+### `budgetExceeded(config)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `config.maxTokens` | `number?` | Max total tokens |
+| `config.maxCostUsd` | `number?` | Max total cost in USD |
+| `config.costPerInputToken` | `number?` | Flat rate per input token |
+| `config.costPerOutputToken` | `number?` | Flat rate per output token |
+| `config.pricing` | `Record<string, ModelPricing>?` | Per-model pricing (takes precedence) |
+
+### `tokenVelocityExceeded(config)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `config.maxAvgPerStep` | `number` | Max average tokens per step |
+| `config.windowSize` | `number?` | Number of recent steps to consider (default: all) |

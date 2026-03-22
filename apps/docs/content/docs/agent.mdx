@@ -1,0 +1,230 @@
+---
+title: Agent & Heartbeat
+description: EmployeeAgent composes all primitives into an AI SDK Agent. Heartbeat adds always-on scheduling with circuit breakers.
+---
+
+If you're using membrane + memory + cost tracking together, wiring all the callbacks into `generateText()` every time gets repetitive. `EmployeeAgent` handles that composition for you. One config object, one `Agent` you pass to `generateText`.
+
+For agents that need to run on a schedule (polling a queue, checking email, running maintenance), `createHeartbeat` wraps any agent with a concurrency guard and circuit breaker. You bring the scheduler (`setInterval`, Vercel Cron, whatever). The heartbeat handles the rest.
+
+## EmployeeAgent
+
+```typescript
+import { openai } from '@ai-sdk/openai';
+import { generateText, tool } from 'ai';
+import { EmployeeAgent, InMemoryStore, DEFAULT_MODEL_PRICING } from '@ai-employee-sdk/core';
+import { z } from 'zod';
+
+const store = new InMemoryStore();
+await store.set('memory:context', 'User prefers concise answers');
+
+const agent = new EmployeeAgent({
+  model: openai('gpt-4o'),
+  id: 'assistant-v1',
+  instructions: 'You are a helpful assistant.',
+  maxSteps: 15,
+  tools: {
+    search: tool({
+      description: 'Search the web',
+      parameters: z.object({ query: z.string() }),
+      execute: async ({ query }) => `Results for: ${query}`,
+    }),
+    sendSlack: tool({
+      description: 'Send a Slack message',
+      parameters: z.object({ channel: z.string(), text: z.string() }),
+      execute: async ({ channel, text }) => `Sent to ${channel}`,
+    }),
+  },
+  membrane: {
+    tiers: {
+      auto: ['search'],
+      confirm: ['sendSlack'],
+    },
+  },
+  memory: {
+    store,
+    config: { maxTokenBudget: 3000 },
+  },
+});
+
+const result = await generateText({
+  agent,
+  prompt: 'Search for the latest AI news and post a summary to #general.',
+});
+
+console.log(result.text);
+console.log(agent.auditLog); // membrane audit log
+```
+
+### What EmployeeAgent Does
+
+Under the hood (~50 lines of code):
+
+1. **Creates a membrane** from `config.membrane` + `config.tools`. Wraps tools with tier permissions.
+2. **Creates a memory prepareStep** from `config.memory.store`. Injects memories at step 0.
+3. **Composes all prepareSteps** via `composePrepareStep`: membrane + memory + user-provided `prepareStep` (single function or array).
+4. **Composes stop conditions**: `stepCountIs(maxSteps)` + user-provided `stopWhen` (single or array).
+5. **Delegates to `ToolLoopAgent`** from the AI SDK for the actual agent loop.
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `version` | `'agent-v1'` | Agent protocol version |
+| `id` | `string \| undefined` | Agent identifier |
+| `tools` | `TOOLS` | The wrapped tools |
+| `auditLog` | `AuditEntry[]` | Membrane audit log (empty if no membrane configured) |
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `generate(options)` | Delegates to `ToolLoopAgent.generate()` |
+| `stream(options)` | Delegates to `ToolLoopAgent.stream()` |
+
+### Custom PrepareStep
+
+Add your own prepareStep functions alongside membrane and memory:
+
+```typescript
+const agent = new EmployeeAgent({
+  model: openai('gpt-4o'),
+  tools: { /* ... */ },
+  prepareStep: (options) => ({
+    system: `Current step: ${options.stepNumber}. Be concise after step 3.`,
+    toolChoice: options.stepNumber > 5 ? 'none' : 'auto',
+  }),
+});
+```
+
+Or pass multiple:
+
+```typescript
+const agent = new EmployeeAgent({
+  model: openai('gpt-4o'),
+  tools: { /* ... */ },
+  prepareStep: [
+    (options) => ({ system: 'Layer 1 context' }),
+    (options) => ({ system: 'Layer 2 context' }),
+  ],
+});
+```
+
+All prepareStep functions are composed via `composePrepareStep` with deterministic [merge rules](./memory#merge-rules).
+
+### Stop Conditions
+
+```typescript
+import { tokenVelocityExceeded, createCostTracker, DEFAULT_MODEL_PRICING } from '@ai-employee-sdk/core';
+
+const cost = createCostTracker({ budget: 2.00, pricing: DEFAULT_MODEL_PRICING });
+
+const agent = new EmployeeAgent({
+  model: openai('gpt-4o'),
+  tools: { /* ... */ },
+  maxSteps: 20,
+  stopWhen: [
+    cost.stopCondition,
+    tokenVelocityExceeded({ maxAvgPerStep: 5000 }),
+  ],
+  onStepFinish: cost.onStepFinish,
+});
+```
+
+## Heartbeat
+
+`createHeartbeat` wraps any agent (or any object with a `generate` method) with always-on scheduling logic. You bring the scheduler (setInterval, Cron, Vercel Workflow). The heartbeat provides:
+
+- **Concurrency guard**: skips if a tick is already running
+- **Circuit breaker**: stops after N consecutive errors
+- **State persistence**: persists error count and circuit state to a `MemoryStore`
+
+```typescript
+import { createHeartbeat, EmployeeAgent, InMemoryStore } from '@ai-employee-sdk/core';
+import { openai } from '@ai-sdk/openai';
+
+const store = new InMemoryStore();
+
+const agent = new EmployeeAgent({
+  model: openai('gpt-4o-mini'),
+  instructions: 'Process incoming tasks.',
+  tools: { /* ... */ },
+});
+
+const heartbeat = createHeartbeat(agent, {
+  checkWork: async () => {
+    const task = await getNextTask(); // your task queue
+    if (!task) return null;           // null = no work
+    return `Process task: ${task.description}`; // string = prompt
+  },
+  state: store,
+  maxConsecutiveErrors: 3,
+});
+
+// You bring the scheduler
+setInterval(async () => {
+  const result = await heartbeat.tick();
+  if (result) {
+    console.log('Processed:', result.prompt);
+  }
+}, 30_000); // every 30 seconds
+```
+
+### How It Works
+
+<Diagram src="/images/heartbeat.png" alt="Heartbeat tick cycle: concurrency guard, signal check, circuit breaker check, checkWork, agent.generate, error tracking" />
+
+### Circuit Breaker
+
+After `maxConsecutiveErrors` (default: 5) consecutive failures, the circuit opens and all future ticks return `null`. The circuit state is persisted to the `MemoryStore` under the key `heartbeat:state`.
+
+A successful `checkWork()` call (even returning `null`) resets the error counter.
+
+### AbortSignal
+
+```typescript
+const controller = new AbortController();
+
+const heartbeat = createHeartbeat(agent, {
+  checkWork: async () => { /* ... */ },
+  signal: controller.signal,
+});
+
+// Later: stop the heartbeat
+controller.abort();
+```
+
+## Reference
+
+### `EmployeeAgent` constructor
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `config.model` | `LanguageModel` | AI SDK language model |
+| `config.instructions` | `string?` | System prompt |
+| `config.id` | `string?` | Agent identifier |
+| `config.tools` | `TOOLS?` | Tools the agent can use |
+| `config.membrane` | `Omit<MembraneConfig, 'tools'>?` | Membrane config (tools passed separately) |
+| `config.memory` | `{ store: MemoryStore, config?: MemoryPrepareStepConfig }?` | Memory injection |
+| `config.prepareStep` | `PrepareStepFunction \| PrepareStepFunction[]?` | Additional prepareStep functions |
+| `config.stopWhen` | `StopCondition \| StopCondition[]?` | Stop conditions |
+| `config.onStepFinish` | `(event) => void?` | Step finish callback |
+| `config.onFinish` | `(event) => void?` | Generation finish callback |
+| `config.maxSteps` | `number?` | Max steps fallback. Default: `20` |
+
+### `createHeartbeat(agent, config)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent` | `{ generate: (options: { prompt: string }) => Promise<unknown> }` | Any agent-like object |
+| `config.checkWork` | `() => Promise<string \| null>` | Check for work. `null` = no work, `string` = prompt |
+| `config.state` | `MemoryStore?` | Store for state persistence |
+| `config.maxConsecutiveErrors` | `number?` | Circuit breaker threshold. Default: `5` |
+| `config.signal` | `AbortSignal?` | Cancellation signal |
+
+**Returns:** `HeartbeatResult`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `tick()` | `Promise<{ prompt, response } \| null>` | Execute one tick |
+| `isRunning()` | `boolean` | Whether a tick is in progress |

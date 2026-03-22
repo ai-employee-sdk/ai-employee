@@ -1,0 +1,336 @@
+---
+title: Examples
+description: End-to-end examples combining multiple primitives from @ai-employee-sdk/core.
+---
+
+## Slack Co-worker Agent
+
+An always-on agent that monitors Slack for tasks, with permission tiers, cost limits, and human approval for sensitive actions.
+
+```typescript
+import { openai } from '@ai-sdk/openai';
+import { generateText, tool } from 'ai';
+import {
+  EmployeeAgent,
+  createCostTracker,
+  createHeartbeat,
+  InMemoryStore,
+  DEFAULT_MODEL_PRICING,
+} from '@ai-employee-sdk/core';
+import { z } from 'zod';
+
+// Tools
+const tools = {
+  readChannel: tool({
+    description: 'Read messages from a Slack channel',
+    parameters: z.object({ channel: z.string(), limit: z.number().default(10) }),
+    execute: async ({ channel, limit }) => {
+      // your Slack API call
+      return `Last ${limit} messages from #${channel}`;
+    },
+  }),
+  postMessage: tool({
+    description: 'Post a message to Slack',
+    parameters: z.object({ channel: z.string(), text: z.string() }),
+    execute: async ({ channel, text }) => {
+      // your Slack API call
+      return `Posted to #${channel}`;
+    },
+  }),
+  createJiraTicket: tool({
+    description: 'Create a Jira ticket',
+    parameters: z.object({ title: z.string(), body: z.string() }),
+    execute: async ({ title }) => {
+      // your Jira API call
+      return `Created ticket: ${title}`;
+    },
+  }),
+};
+
+// Agent with membrane + memory + cost tracking
+const store = new InMemoryStore();
+await store.set('memory:team', 'Engineering team, sprint 14, focus on auth migration');
+
+const cost = createCostTracker({
+  budget: 5.00, // $5 daily budget
+  pricing: DEFAULT_MODEL_PRICING,
+});
+
+const agent = new EmployeeAgent({
+  model: openai('gpt-4o-mini'),
+  instructions: 'You are a Slack co-worker. Help the team with tasks.',
+  tools,
+  membrane: {
+    tiers: {
+      auto: ['readChannel'],
+      confirm: ['postMessage'],
+      block: ['createJiraTicket'],
+    },
+  },
+  memory: { store },
+  maxSteps: 10,
+  onStepFinish: cost.onStepFinish,
+  stopWhen: cost.stopCondition,
+});
+
+// Heartbeat: check for work every 60 seconds
+const heartbeat = createHeartbeat(agent, {
+  checkWork: async () => {
+    const pendingTasks = await checkSlackForMentions();
+    if (!pendingTasks) return null;
+    return `New mention: ${pendingTasks}`;
+  },
+  state: store,
+  maxConsecutiveErrors: 3,
+});
+
+setInterval(() => heartbeat.tick(), 60_000);
+```
+
+## Human-in-the-Loop API Route
+
+A Next.js API route that handles the interrupt/resume cycle for tool approval.
+
+```typescript
+// app/api/agent/route.ts
+import { openai } from '@ai-sdk/openai';
+import { generateText, tool } from 'ai';
+import {
+  membrane,
+  extractPendingApprovals,
+  createInterruptHandle,
+  createCostTracker,
+  DEFAULT_MODEL_PRICING,
+} from '@ai-employee-sdk/core';
+import { z } from 'zod';
+
+const tools = {
+  searchDocs: tool({
+    description: 'Search documentation',
+    parameters: z.object({ query: z.string() }),
+    execute: async ({ query }) => `Results for: ${query}`,
+  }),
+  deployToProduction: tool({
+    description: 'Deploy the current build to production',
+    parameters: z.object({ version: z.string() }),
+    execute: async ({ version }) => `Deployed v${version}`,
+  }),
+};
+
+export async function POST(req: Request) {
+  const { prompt } = await req.json();
+
+  const m = membrane({
+    tools,
+    tiers: {
+      auto: ['searchDocs'],
+      confirm: ['deployToProduction'],
+    },
+  });
+
+  const cost = createCostTracker({
+    budget: 1.00,
+    pricing: DEFAULT_MODEL_PRICING,
+  });
+
+  const result = await generateText({
+    model: openai('gpt-4o'),
+    tools: m.tools,
+    prepareStep: m.prepareStep,
+    experimental_onToolCallFinish: m.onToolCallFinish,
+    onStepFinish: cost.onStepFinish,
+    stopWhen: cost.stopCondition,
+    maxSteps: 10,
+    prompt,
+  });
+
+  const pending = extractPendingApprovals(result);
+
+  if (pending.length > 0) {
+    const handle = createInterruptHandle(result, pending);
+
+    // Store handle (e.g., KV, database)
+    await kv.set(`interrupt:${handle.id}`, JSON.stringify(handle));
+
+    return Response.json({
+      status: 'pending_approval',
+      handleId: handle.id,
+      pendingApprovals: pending.map((p) => ({
+        toolCallId: p.toolCallId,
+        toolName: p.toolName,
+        args: p.args,
+      })),
+      cost: cost.snapshot(),
+    });
+  }
+
+  return Response.json({
+    status: 'complete',
+    text: result.text,
+    auditLog: m.auditLog,
+    cost: cost.snapshot(),
+  });
+}
+```
+
+```typescript
+// app/api/agent/resolve/route.ts
+import { openai } from '@ai-sdk/openai';
+import { generateText } from 'ai';
+import { resolveInterrupt, membrane } from '@ai-employee-sdk/core';
+
+export async function POST(req: Request) {
+  const { handleId, decisions } = await req.json();
+
+  const stored = JSON.parse(await kv.get(`interrupt:${handleId}`));
+  const { messages, previousUsage } = resolveInterrupt(stored, decisions);
+
+  const m = membrane({
+    tools,
+    tiers: { auto: ['searchDocs'], confirm: ['deployToProduction'] },
+  });
+
+  const result = await generateText({
+    model: openai('gpt-4o'),
+    tools: m.tools,
+    prepareStep: m.prepareStep,
+    messages,
+    maxSteps: 10,
+  });
+
+  await kv.delete(`interrupt:${handleId}`);
+
+  return Response.json({
+    status: 'complete',
+    text: result.text,
+    auditLog: m.auditLog,
+  });
+}
+```
+
+## Dynamic MCP Tools with Glob Patterns
+
+Use glob patterns to handle tools discovered at runtime (e.g., from MCP servers).
+
+```typescript
+import { openai } from '@ai-sdk/openai';
+import { generateText } from 'ai';
+import { membrane } from '@ai-employee-sdk/core';
+
+// Static tools + dynamic MCP tools discovered at runtime
+const allTools = {
+  readFile: staticTool,
+  writeFile: staticTool,
+  mcp_slack_read: mcpTool,
+  mcp_slack_post: mcpTool,
+  mcp_github_create_pr: mcpTool,
+  mcp_github_merge: mcpTool,
+  mcp_deploy_production: mcpTool,
+};
+
+const m = membrane({
+  tools: allTools,
+  tiers: {
+    auto: ['readFile'],
+    draft: ['writeFile'],
+  },
+  patterns: [
+    { match: 'mcp_*_read', tier: 'auto', description: 'MCP read operations' },
+    { match: 'mcp_*_post', tier: 'confirm', description: 'MCP write operations' },
+    { match: 'mcp_deploy_*', tier: 'block', description: 'Block all deploy tools' },
+    { match: 'mcp_*', tier: 'confirm', description: 'Default for MCP tools' },
+  ],
+  default: 'confirm',
+});
+
+// mcp_slack_read → auto (pattern: mcp_*_read)
+// mcp_slack_post → confirm (pattern: mcp_*_post)
+// mcp_github_create_pr → confirm (pattern: mcp_*, catch-all)
+// mcp_github_merge → confirm (pattern: mcp_*, catch-all)
+// mcp_deploy_production → block (pattern: mcp_deploy_*)
+```
+
+## Multi-Model with Shared Budget
+
+Track costs across different models within a shared budget.
+
+```typescript
+import { openai } from '@ai-sdk/openai';
+import { anthropic } from '@ai-sdk/anthropic';
+import { generateText } from 'ai';
+import { createCostTracker, DEFAULT_MODEL_PRICING } from '@ai-employee-sdk/core';
+
+const cost = createCostTracker({
+  budget: 10.00,
+  pricing: DEFAULT_MODEL_PRICING,
+});
+
+// Triage with cheap model
+const triage = await generateText({
+  model: openai('gpt-4o-mini'),
+  onStepFinish: cost.onStepFinish,
+  prompt: 'Classify this support ticket: ...',
+});
+
+// Handle complex tickets with expensive model
+if (triage.text.includes('complex')) {
+  const response = await generateText({
+    model: anthropic('claude-sonnet-4-20250514'),
+    onStepFinish: cost.onStepFinish,
+    stopWhen: cost.stopCondition,
+    prompt: 'Resolve this complex ticket: ...',
+  });
+}
+
+const snapshot = cost.snapshot();
+console.log(snapshot.byModel);
+// {
+//   'gpt-4o-mini': { costUsd: 0.003, inputTokens: 150, ... },
+//   'claude-sonnet-4-20250514': { costUsd: 0.45, inputTokens: 2000, ... },
+// }
+console.log(snapshot.totalCostUsd); // 0.453
+console.log(snapshot.remainingUsd); // 9.547
+```
+
+## Composing PrepareStep for Multi-Tenant
+
+Different tenants get different system prompts, tool access, and memory.
+
+```typescript
+import {
+  composePrepareStep,
+  membrane,
+  createMemoryPrepareStep,
+} from '@ai-employee-sdk/core';
+
+function createTenantAgent(tenantId: string, tenantStore: MemoryStore) {
+  const m = membrane({
+    tools,
+    tiers: {
+      auto: ['readData'],
+      confirm: ['writeData'],
+    },
+    resolve: (toolName) => {
+      // Tenant-specific overrides
+      if (tenantId === 'admin' && toolName === 'writeData') return 'auto';
+      return undefined;
+    },
+  });
+
+  const memoryStep = createMemoryPrepareStep(tenantStore, {
+    prefix: `tenant:${tenantId}:`,
+  });
+
+  const tenantStep = () => ({
+    system: `You are helping tenant ${tenantId}. Follow their SLA.`,
+  });
+
+  const composed = composePrepareStep(
+    m.prepareStep,
+    memoryStep,
+    tenantStep,
+  );
+
+  return { tools: m.tools, prepareStep: composed, auditLog: m.auditLog };
+}
+```

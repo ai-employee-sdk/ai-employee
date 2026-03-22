@@ -7,4 +7,8 @@ dist
 .ai-employee-*
 *.txt
 CLAUDE.local.md
-docs/
+scripts/
+/docs/
+
+# Generated images (large, regenerable)
+apps/docs/public/images/generated/

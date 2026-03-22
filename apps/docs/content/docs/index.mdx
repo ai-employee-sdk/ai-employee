@@ -1,0 +1,49 @@
+---
+title: Introduction
+description: Autonomous agent primitives for the Vercel AI SDK. Permissions, cost tracking, server-side interrupts.
+---
+
+You're building agents with the [Vercel AI SDK](https://sdk.vercel.ai). Your agent calls tools, runs in loops, and produces results. But in production, three questions come up fast:
+
+- Which tools should this agent be allowed to run without asking?
+- How much is this run costing, and when should it stop?
+- What happens when the agent needs a human to approve something at 3 AM?
+
+AI Employee SDK adds the primitives to answer those. Each one is a standalone function that plugs into `generateText()`. No framework to adopt, no abstractions to learn, no lock-in.
+
+## Architecture
+
+<Diagram src="/images/architecture.png" alt="AI Employee SDK architecture: EmployeeAgent composes membrane, memory, cost tracker, and user prepareStep through composePrepareStep into AI SDK generateText" />
+
+Use `EmployeeAgent` for the composed experience, or wire each primitive into `generateText` yourself.
+
+## Primitives
+
+<Cards>
+  <Card title="Membrane & Tiers" href="./membrane">
+    4-tier permission system: auto, draft, confirm, block. Glob patterns, custom resolvers, audit log.
+  </Card>
+  <Card title="Cost Tracking" href="./cost-tracking">
+    Per-model USD budgets with built-in pricing for OpenAI, Anthropic, and Google models.
+  </Card>
+  <Card title="Interrupts" href="./interrupts">
+    Pause agent execution for human approval. Serialize state. Resume with decisions.
+  </Card>
+  <Card title="Memory & Composition" href="./memory">
+    Inject memories via prepareStep. Compose multiple prepareStep functions with deterministic merge rules.
+  </Card>
+  <Card title="Agent & Heartbeat" href="./agent">
+    EmployeeAgent composes all primitives. Heartbeat adds always-on scheduling with circuit breakers.
+  </Card>
+  <Card title="Audit Logging" href="./audit">
+    Capture tool call and step events for observability pipelines.
+  </Card>
+</Cards>
+
+## Install
+
+```bash
+npm install @ai-employee-sdk/core ai
+```
+
+Requires `ai >= 7.0.0-beta.30` as a peer dependency.
