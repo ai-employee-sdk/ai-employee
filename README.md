@@ -2,6 +2,8 @@
 
 Composable autonomy primitives for the [Vercel AI SDK](https://ai-sdk.dev).
 
+[Documentation](https://ai-employee-sdk.vercel.app) | [GitHub](https://github.com/ai-employee-sdk/ai-employee)
+
 > The SDK gives you primitives. You build the employee.
 
 Every AI agent framework wants to own your stack. AI Employee SDK takes the opposite approach: standalone functions that compose with raw `generateText()`. Need tool permissions? Import `membrane()`. Need cost tracking? Import `createCostTracker()`. Need to pause an agent for human approval and resume it hours later with zero compute cost? Import the interrupt primitives. Each one is a pure function. No base classes, no runtime, no lock-in. Built for the Vercel AI SDK, not around it.
