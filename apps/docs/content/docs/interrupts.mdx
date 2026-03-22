@@ -78,7 +78,20 @@ if (pending.length > 0) {
     { toolCallId: pending[0].toolCallId, action: 'approve' },
   ]);
 
-  // Step 6: Resume the agent
+  // Step 6: Execute approved tools and inject real results
+  const lastMsg = messages[messages.length - 1];
+  if (lastMsg?.role === 'tool') {
+    for (const part of lastMsg.content) {
+      if (part.output?.type === 'execution-denied') continue;
+      const approval = pending.find((p) => p.toolCallId === part.toolCallId);
+      if (approval) {
+        const result = await tools.sendEmail.execute(approval.args as any, {} as any);
+        part.output = { type: 'text', value: typeof result === 'string' ? result : JSON.stringify(result) };
+      }
+    }
+  }
+
+  // Step 7: Resume the agent with real tool output
   const resumed = await generateText({
     model: openai('gpt-4o'),
     tools: m.tools,
@@ -90,6 +103,12 @@ if (pending.length > 0) {
   console.log(resumed.text);
 }
 ```
+
+<Callout type="warn">
+  `resolveInterrupt` is a pure function. It produces placeholder tool results, not real execution output. You are responsible for executing approved tools and replacing the placeholders with real results before resuming. Without this step, the agent sees a placeholder like `[APPROVED]` but the tool never actually ran, causing it to retry the tool call in a loop.
+</Callout>
+
+See the [slack-coworker example](https://github.com/ai-employee-sdk/ai-employee/tree/main/examples/slack-coworker) for a complete implementation of this pattern.
 
 ## Editing Arguments
 
